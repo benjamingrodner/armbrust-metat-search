@@ -1,0 +1,2 @@
+fn_metat,fn_targets,name_key,name_value,columns_line_number,search_output_dir
+test_table.G1NS.S11C1_3um.kofam2021.subset.csv,iron_KOs.example.txt,query_name,target_name,1,dicts_iron_KO_contig_example

@@ -63,14 +63,14 @@ def get_output_fn(args):
     Returns:
         str: Output filename
     """
-    bns = []
-    for fn_full in [args.fn_metat, args.fn_targets]:
-        fn = os.path.split(fn_full)[1]
-        bns.append(os.path.splitext(fn)[0])
+    # bns = []
+    # for fn_full in [args.fn_metat, args.fn_targets]:
+    #     fn = os.path.split(fn_full)[1]
+    #     bns.append(os.path.splitext(fn)[0])
     return(
-        args.output_dir + '/' 
-        + bns[0] + '.' + bns[1] 
-        + '.dict_' + args.name_key + '_' + args.name_value 
+        'output/' 
+        + args.fn_metat + '-' + args.fn_targets 
+        + '.dict-' + args.name_key + '-' + args.name_value 
         + '.json'
     )
 
@@ -211,11 +211,11 @@ def parse_arguments():
     #     )
     parser.add_argument(
         '-m', '--fn_metat', type=str, required=True,
-        help="Path to a file with a list of KOs to find."
+        help="Path to metaT file."
     )
     parser.add_argument(
         '-t', '--fn_targets', type=str, required=True,
-        help="Path to a file with a list of KOs to find."
+        help="Path to a file with a list of targets to find."
     )
     parser.add_argument(
         '-k', '--name_key', type=str, required=True,
@@ -230,8 +230,8 @@ def parse_arguments():
         help="Line in the file to search for column names. Default is line 1 (counting starts at 1 not 0)."
     )
     parser.add_argument(
-        '-o', '--output_dir', type=str, default="metat_dicts", 
-        help="Path to the output directory. Default is 'KO_contig_dicts'."
+        '-o', '--output_fn', type=str, default="", 
+        help="Path to the output file. Default is 'output/{fn_metat}-{fn_targets}-dict-{name_key}-{name_value}.json'."
     )
     parser.add_argument(
         '--verbose', action='store_true', 
@@ -268,7 +268,6 @@ def main():
         print(f"Key name: {args.name_key}")
         print(f"Value name: {args.name_value}")
         print(f"Column line number: {args.columns_line_number}")
-        print(f"Output dir: {args.output_dir}")
 
     # Read KO list
     with open(args.fn_targets) as f:
@@ -290,7 +289,11 @@ def main():
     )
     
     # Get output filename
-    out_fn = get_output_fn(args)
+    if not args.output_fn:
+        out_fn = get_output_fn(args)
+    else:
+        out_fn = args.output_fn
+
     # Write dictionary to json
     save_dict(dict_metat, out_fn)
 

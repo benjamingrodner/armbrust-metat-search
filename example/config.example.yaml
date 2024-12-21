@@ -1,0 +1,2 @@
+input_table: file_table.example.csv
+snakemake_output_dir: metat_search_results_example
