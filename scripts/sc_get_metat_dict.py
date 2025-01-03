@@ -75,19 +75,28 @@ def get_output_fn(args):
     )
 
 
-def split_line(line):
+def split_line(line, fn):
     """
     Split line string read from file
 
     Args:
         line (str): Unparsed line from the file.
+        fn (str): Path to file.
     Returns:
         list: Split line.
     """
-    return re.split(r'\s|,', line)
+    fspl, ext = os.path.splitext(fn)
+    if ext == '.gz':
+        ext = os.path.splitext(fspl)[1]
+    if ext == '.csv':
+        return re.split(r',', line)
+    if ext == '.tsv':
+        return re.split(r'\t', line)
+    if ext == '.tab':
+        return re.split(r'\s+', line)
+    
 
-
-def add_to_dict(line, set_search, idx_key, idx_value, dict_metat):
+def add_to_dict(line, fn, set_search, idx_key, idx_value, dict_metat):
     """
     Extract key and value from a line and add to the dictionary
 
@@ -102,7 +111,8 @@ def add_to_dict(line, set_search, idx_key, idx_value, dict_metat):
         defaultdict(list): Updated dictionary.
     """
     # Separate the line by spaces (\s) or commas
-    l = split_line(line)
+    l = split_line(line, fn)
+    if len(l) >= max(idx_key, idx_value)
     # Get key and remove extra quotes
     key = l[idx_key].replace('"','').replace("'", "")
     # Search target keys
@@ -150,7 +160,7 @@ def get_metat_dict(fn, set_search, idx_key, idx_value):
     f = open_file(fn)
     for line in f:
         dict_metat = add_to_dict(
-            line, 
+            line, fn,
             set_search, idx_key, idx_value,
             dict_metat
         )
@@ -174,7 +184,7 @@ def get_key_value_idx(fn, name_key, name_value, cln=1):
     f = open_file(fn)
     for _ in range(cln):
         line = f.readline()
-    l = split_line(line)
+    l = split_line(line, fn)
     for idx, column in enumerate(l):
         # Remove extra quotes
         column = column.replace('"','').replace("'", "")
@@ -183,13 +193,22 @@ def get_key_value_idx(fn, name_key, name_value, cln=1):
         elif column == name_value:
             idx_value = idx
     try:
-        idx_key, idx_value
+        idx_key
     except NameError:
         raise ValueError(
-            "The provided arguments -k {name_key} and -vl {name_value} did not map to column names in the file.\n\
+            f"The provided argument -k {name_key} did not map to column names in the file.\n\
             Here is the split line (line number {cln} in the file) used to search for column names:\n\
             {l}\n\
-            To change the column line specify -c <columns_line_number> in the arguments (counting starts from 1 not 0)"
+            To change the column line, specify -c <columns_line_number> in the arguments (counting starts from 1 not 0)"
+        )
+    try:
+        idx_value
+    except NameError:
+        raise ValueError(
+            f"The provided argument -vl {name_value} did not map to column names in the file.\n\
+            Here is the split line (line number {cln} in the file) used to search for column names:\n\
+            {l}\n\
+            To change the column line, specify -c <columns_line_number> in the arguments (counting starts from 1 not 0)"
         )
     return(idx_key, idx_value)
 
@@ -217,18 +236,28 @@ def parse_arguments():
         '-t', '--fn_targets', type=str, required=True,
         help="Path to a file with a list of targets to find."
     )
+
     parser.add_argument(
-        '-k', '--name_key', type=str, required=True,
+        '-k', '--name_key', type=str, nargs='?', const='',
         help="Column name in metat file to be used for dictionary keys."
     )
     parser.add_argument(
-        '-vl', '--name_value', type=str, required=True,
+        '-vl', '--name_value', type=str, nargs='?', const='',
         help="Column name in metat file to be used for dictionary values."
     )
     parser.add_argument(
-        '-c', '--columns_line_number', type=int, default=1,
+        '-c', '--columns_line_number', type=int, nargs='?', const=1,
         help="Line in the file to search for column names. Default is line 1 (counting starts at 1 not 0)."
     )
+    parser.add_argument(
+        '-ik', '--idx_key', type=int, nargs='?', const=0,
+        help="Column name in metat file to be used for dictionary keys."
+    )
+    parser.add_argument(
+        '-ivl', '--idx_value', type=int, nargs='?', const=1,
+        help="Column name in metat file to be used for dictionary values."
+    )
+
     parser.add_argument(
         '-o', '--output_fn', type=str, default="", 
         help="Path to the output file. Default is 'output/{fn_metat}-{fn_targets}-dict-{name_key}-{name_value}.json'."
@@ -272,13 +301,18 @@ def main():
     # Read KO list
     with open(args.fn_targets) as f:
         set_search = set(f.read().splitlines())
+
     # Get key, value indices
-    idx_key, idx_value = get_key_value_idx(
-        args.fn_metat, 
-        args.name_key, 
-        args.name_value, 
-        args.columns_line_number
-    )
+    if args.name_key and args.name_value:
+        idx_key, idx_value = get_key_value_idx(
+            args.fn_metat, 
+            args.name_key.replace('"','').replace("'", ""), 
+            args.name_value.replace('"','').replace("'", ""), 
+            args.columns_line_number
+        )
+    else:
+        idx_key = args.idx_key
+        idx_value = args.idx_value
 
     # Get dictionary from metat file, mapping key to value
     dict_metat = get_metat_dict(
