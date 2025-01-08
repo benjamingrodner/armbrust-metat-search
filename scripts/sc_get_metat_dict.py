@@ -9,7 +9,7 @@ Description:
     Extract contigs from the gradients dataset with those kegg orthologies
 
 Usage:
-    python sc_get_ko_contig_dicts.py -m <fn_metat> -t <fn_targets> -k <name_key> -v <name_value> -c <columns_line_number> -o <output_dir> --verbose
+    python sc_get_ko_contig_dicts.py -m <fn_metat> -t <fn_targets> -k <name_key> -v <name_value> -c <columns_line_number> -ik <idx_key> -ivl <idx_value> -o <output_fn> --verbose
 
 """
 
@@ -20,11 +20,13 @@ Usage:
 from collections import defaultdict
 from time import time
 import argparse
+import tarfile
 import gzip
 import json
 import sys
 import os
 import re
+import io
 
 ###################################################################################################
 # Functions
@@ -75,19 +77,26 @@ def get_output_fn(args):
     )
 
 
-def split_line(line, fn):
+def split_line(line, fn, fn_tar=''):
     """
     Split line string read from file
 
     Args:
         line (str): Unparsed line from the file.
         fn (str): Path to file.
+        fn_tar (str): If the metat file is a tarball, what is the name of the file within the tarball to extract.
     Returns:
         list: Split line.
     """
     fspl, ext = os.path.splitext(fn)
+    # Check if gzipped
     if ext == '.gz':
         ext = os.path.splitext(fspl)[1]
+    # Adjust if it's a tarball
+    if fn_tar:
+        ext = os.path.splitext(fn_tar)[1]
+        line = line.decode('utf-8')
+    # Separate based on file type
     if ext == '.csv':
         return re.split(r',', line)
     if ext == '.tsv':
@@ -96,12 +105,14 @@ def split_line(line, fn):
         return re.split(r'\s+', line)
     
 
-def add_to_dict(line, fn, set_search, idx_key, idx_value, dict_metat):
+def add_to_dict(line, fn, fn_tar, set_search, idx_key, idx_value, dict_metat):
     """
     Extract key and value from a line and add to the dictionary
 
     Args:
         line (str): Unparsed line from the file.
+        fn (str): Path to metat file.
+        fn_tar (str): If the metat file is a tarball, what is the name of the file within the tarball to extract.
         set_search (set): Set of keys to add to the dictionary.
         idx_key (int): Index of the key in the parsed line (parsed by ',' or '\s').
         idx_value (int): Index of the mapped value in the parsed line (parsed by ',' or '\s').
@@ -111,24 +122,25 @@ def add_to_dict(line, fn, set_search, idx_key, idx_value, dict_metat):
         defaultdict(list): Updated dictionary.
     """
     # Separate the line by spaces (\s) or commas
-    l = split_line(line, fn)
-    if len(l) >= max(idx_key, idx_value)
-    # Get key and remove extra quotes
-    key = l[idx_key].replace('"','').replace("'", "")
-    # Search target keys
-    if key in set_search:
-        # Add value to dict
-        value = l[idx_value].replace('"','').replace("'", "")
-        dict_metat[key].append(value)
+    l = split_line(line, fn, fn_tar)
+    if len(l) > max(idx_key, idx_value):
+        # Get key and remove extra quotes
+        key = l[idx_key].replace('"','').replace("'", "")
+        # Search target keys
+        if key in set_search:
+            # Add value to dict
+            value = l[idx_value].replace('"','').replace("'", "")
+            dict_metat[key].append(value)
     return dict_metat
 
 
-def open_file(fn):
+def open_file(fn, fn_tar=''):
     """
     Open text file if gzipped, or not
 
     Args:
         fn (str): Path to metat file.
+        fn_tar (str): If the metat file is a tarball, what is the name of the file within the tarball to extract.
 
     Returns:
         _io.TextIOWrapper: Metat file.
@@ -136,19 +148,26 @@ def open_file(fn):
     # Get file type
     ext = os.path.splitext(fn)[1]
     # Unzip to read
-    if ext == '.gz':
-        return gzip.open(fn, 'rt')
+    if not fn_tar:
+        if ext == '.gz':
+            return gzip.open(fn, 'rt')
+        else:
+            return open(fn, 'r')
     else:
-        return open(fn, 'r')
+        tarf = tarfile.open(fn, "r|gz")
+        for t in tarf:
+            if fn_tar in t.name:
+                return tarf.extractfile(t)
 
 
-def get_metat_dict(fn, set_search, idx_key, idx_value):
+def get_metat_dict(fn, fn_tar, set_search, idx_key, idx_value):
     """
     Collect all contigs with given Kegg Orthologies
     SET UP to parse armbrust-metat folder files as of 2024-12-19
 
     Args:
         fn (str): Path to metat file.
+        fn_tar (str): If the metat file is a tarball, what is the name of the file within the tarball to extract.
         set_search (set): Set of keys to add to the dictionary.
         idx_key (int): Index of the key in the parsed line (parsed by ',' or '\s').
         idx_value (int): Index of the mapped value in the parsed line (parsed by ',' or '\s').
@@ -157,10 +176,10 @@ def get_metat_dict(fn, set_search, idx_key, idx_value):
         defaultdict(list): Map of metat values key -> values.
     """
     dict_metat = defaultdict(list)
-    f = open_file(fn)
+    f = open_file(fn, fn_tar)
     for line in f:
         dict_metat = add_to_dict(
-            line, fn,
+            line, fn, fn_tar,
             set_search, idx_key, idx_value,
             dict_metat
         )
@@ -168,12 +187,13 @@ def get_metat_dict(fn, set_search, idx_key, idx_value):
     return dict_metat
 
 
-def get_key_value_idx(fn, name_key, name_value, cln=1):
+def get_key_value_idx(fn, fn_tar, name_key, name_value, cln=1):
     """
     Get indices for keys and values in parsed metat file.
 
     Args:
         fn (str): Path to metat file.
+        fn_tar (str): If the metat file is a tarball, what is the name of the file within the tarball to extract.
         names_key (str): Column name in metat file to be used for dictionary keys.
         names_value (str): Column name in metat file to be used for dictionary values.
 
@@ -181,10 +201,11 @@ def get_key_value_idx(fn, name_key, name_value, cln=1):
         int: Index of the key in the parsed line (parsed by ',' or '\s').
         int: Index of the mapped value in the parsed line (parsed by ',' or '\s').
     """
-    f = open_file(fn)
+    f = open_file(fn, fn_tar)
     for _ in range(cln):
         line = f.readline()
-    l = split_line(line, fn)
+    f.close()
+    l = split_line(line, fn, fn_tar)
     for idx, column in enumerate(l):
         # Remove extra quotes
         column = column.replace('"','').replace("'", "")
@@ -231,6 +252,10 @@ def parse_arguments():
     parser.add_argument(
         '-m', '--fn_metat', type=str, required=True,
         help="Path to metaT file."
+    )
+    parser.add_argument(
+        '-mt', '--fn_metat_tar', nargs='?', const='',
+        help="If the metat file is a tarball, what is the name of the file within the tarball to extract."
     )
     parser.add_argument(
         '-t', '--fn_targets', type=str, required=True,
@@ -293,10 +318,17 @@ def main():
     if args.verbose:
         print("Verbose mode enabled.")
         print(f"Input fn: {args.fn_metat}")
+        if args.fn_metat_tar:
+            print(f"Tarball fn: {args.fn_metat_tar}")
         print(f"Target fn: {args.fn_targets}")
         print(f"Key name: {args.name_key}")
         print(f"Value name: {args.name_value}")
         print(f"Column line number: {args.columns_line_number}")
+        if args.idx_key:
+            print(f"Key index: {args.idx_key}")
+            print(f"Value index: {args.idx_value}")
+        print(f"Output fn: {args.output_fn}")
+        
 
     # Read KO list
     with open(args.fn_targets) as f:
@@ -306,6 +338,7 @@ def main():
     if args.name_key and args.name_value:
         idx_key, idx_value = get_key_value_idx(
             args.fn_metat, 
+            args.fn_metat_tar,
             args.name_key.replace('"','').replace("'", ""), 
             args.name_value.replace('"','').replace("'", ""), 
             args.columns_line_number
@@ -317,6 +350,7 @@ def main():
     # Get dictionary from metat file, mapping key to value
     dict_metat = get_metat_dict(
         args.fn_metat,
+        args.fn_metat_tar,
         set_search,
         idx_key, 
         idx_value,   

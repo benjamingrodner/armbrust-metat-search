@@ -1,2 +1,2 @@
-fn_metat,fn_targets,name_key,name_value,columns_line_number,search_output_dir
-test_table.G1NS.S11C1_3um.kofam2021.subset.csv.gz,iron_KOs.example.txt,query_name,target_name,1,dicts_iron_KO_contig_example
+path_metat,fn_metat,path_targets,fn_targets,name_key,name_value,columns_line_number,idx_key,idx_value,search_output_dir,dir_kallisto,glob_kallisto,re_kallisto_tar,name_key_kallisto,name_value_kallisto,col_line_kallisto,idx_key_kallisto,idx_value_kallisto
+.,test_kofam.G1NS.S02C1_0_2um.kofam2021.subset.csv.gz,,iron_KOs.example.txt,query_name,target_name,1,,,dicts_iron_KO_contig_example,.,*.abundance.subset.tsv.gz,,target_id,est_counts,1,,
