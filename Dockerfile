@@ -7,7 +7,8 @@ RUN micromamba install -y -n base -f /tmp/env.yaml && \
 WORKDIR /usr/local/bin
 
 ARG MODE=555
-COPY --chmod=${MODE} scripts/sc_get_metat_dict.py Snakefile .
+COPY --chmod=${MODE} scripts/* Snakefile .
 
 
 ENV XDG_CACHE_HOME=/tmp/.cache
+

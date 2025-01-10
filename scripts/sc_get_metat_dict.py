@@ -94,7 +94,9 @@ def split_line(line, fn, fn_tar=''):
         ext = os.path.splitext(fspl)[1]
     # Adjust if it's a tarball
     if fn_tar:
-        ext = os.path.splitext(fn_tar)[1]
+        fspl, ext = os.path.splitext(fn_tar)
+        if ext == '.gz':
+            ext = os.path.splitext(fspl)[1]
         line = line.decode('utf-8')
     # Separate based on file type
     if ext == '.csv':
@@ -154,10 +156,38 @@ def open_file(fn, fn_tar=''):
         else:
             return open(fn, 'r')
     else:
+        # If its a tarball
         tarf = tarfile.open(fn, "r|gz")
+        ext = os.path.splitext(fn_tar)[1]
         for t in tarf:
             if fn_tar in t.name:
-                return tarf.extractfile(t)
+                f = tarf.extractfile(t)
+                # If the files within the tarball are gzipped
+                if ext == '.gz':
+                    f = gzip.open(f)
+                return f
+        # If the file failed to read
+        tarf = tarfile.open(fn, "r|gz")
+        ext = os.path.splitext(fn_tar)[1]
+        i = 0
+        tnames = []
+        for t in tarf:
+            tnames.append(t.name)
+            i += 1
+            if i > 5:
+                break
+        raise ValueError(
+            f"""
+            The target subfilename failed to match any files in the tarball. 
+            The target subfilename was:
+            {fn_tar}
+            Here are 5 tar subfilenames from the tarball:
+            {tnames}
+            The tarball filename was:
+            {fn}
+            """
+        )
+        
 
 
 def get_metat_dict(fn, fn_tar, set_search, idx_key, idx_value):
