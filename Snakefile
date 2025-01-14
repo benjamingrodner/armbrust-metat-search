@@ -18,12 +18,9 @@ import tarfile
 import fnmatch
 import subprocess
 import pandas as pd
-from ete3 import NCBITaxa
-# Build ete3 database in current directory rather than home directory, 
-# this allows apptainer execution without mounting the home directory
-# though it is required to add a scratch $HOME directory with 'apptainer run -S $HOME ... '
-subprocess.run(["sc.symlink_ete3.sh"])  
-# ncbi.update_taxonomy_database()
+os.environ['XDG_DATA_HOME'] = config['XDG_DATA_HOME'] or os.environ['PWD']  # Dir to write the ncbitaxa database (written into 'ete' added to path)
+from ete4 import NCBITaxa
+
 
 # =============================================================================
 # Functions
@@ -179,6 +176,16 @@ def get_fn_kallisto_tar(fn_metat, fn_targets, fn_kallisto, input_table):
     # Assemble full filename
     else:
         return ''
+def get_fn_list_contigs_diamond(fn_metat, fn_targets, input_table, fn_6tr, fn_std):
+    type_contig_name = get_input_table_value(
+            fn_metat, fn_targets, input_table, 'type_diamond_contig_name'
+        )
+    if type_contig_name == '6tr':
+        return fn_6tr
+    else: 
+        return fn_std
+
+
 
 # def get_fn_metat_full(fn_metat, fn_targets, input_table):
 #     path = get_input_table_value(fn_metat, fn_targets, input_table, 'path_metat')
@@ -217,6 +224,10 @@ fmt_dict = (
     + '/{fn_metat}-{fn_targets}-dict.json'
 )
 # format dict_to_list outputs
+fmt_contig_list_6tr = (
+    config['snakemake_output_dir'] + '/{search_output_dir}'
+    + '/{fn_metat}-{fn_targets}-dictolist_6tr.txt'
+)
 fmt_contig_list = (
     config['snakemake_output_dir'] + '/{search_output_dir}'
     + '/{fn_metat}-{fn_targets}-dictolist.txt'
@@ -238,7 +249,7 @@ fmt_dict_contig_tax = (
     + '/dicts_contig_tax/{fn_metat}-{fn_targets}-dict_contig_taxid.json'
 )
 # format taxon full table
-fn_df_contig_tax_full = (
+fmt_df_contig_tax_full = (
     config['snakemake_output_dir'] + '/{search_output_dir}'
     + '/dicts_contig_tax/{fn_metat}-{fn_targets}-df_contig_full_taxonomy.csv'
 )
@@ -246,17 +257,19 @@ fn_df_contig_tax_full = (
 # Write start files
 fns_start = get_fns(fmt_start)
 for fn in fns_start:
-    # Make directories
-    out_dir = os.path.split(fn)[0]
-    if not os.path.exists(out_dir):
-        os.makedirs(out_dir)
-    # Write files
-    with open(fn, 'w') as f:
-        f.write('Started...')
+    if not os.path.exists(fn):
+        # Make directories
+        out_dir = os.path.split(fn)[0]
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
+        # Write files
+        with open(fn, 'w') as f:
+            f.write('Started...')
 
 
 # Scripts
-sc_get_metat_dict = '../repo-armbrust-metat-search/scripts/sc_get_metat_dict.py'
+sc_get_metat_dict = 'sc_get_metat_dict.py'
+# sc_get_metat_dict = '../repo-armbrust-metat-search/scripts/sc_get_metat_dict.py'
 
 
 # =============================================================================
@@ -268,6 +281,7 @@ contig_list_done = get_fns(fmt_contig_list)
 dicts_contig_count_done = get_fns_sample(fmt_dict_contig_count)
 fns_sample_norm_factor = get_fns_sample(fmt_sample_norm_factor)
 fns_dict_contig_tax = get_fns(fmt_dict_contig_tax, col_check='fn_diamond')
+fns_df_contig_tax_full = get_fns(fmt_df_contig_tax_full, col_check='fn_diamond')
 
 # =============================================================================
 # Snake rules
@@ -276,10 +290,10 @@ fns_dict_contig_tax = get_fns(fmt_dict_contig_tax, col_check='fn_diamond')
 rule all:
     input:
         fns_sample_norm_factor,
-        fns_dict_contig_tax
+        fns_df_contig_tax_full
 
 
-rule get_KO_contig_dict:
+rule get_dict_KO_contig:
     input:
         fn_start = fmt_start
     output:
@@ -324,7 +338,7 @@ rule get_KO_contig_dict:
         """
     
 
-rule get_contig_list:
+rule get_list_contigs:
     input:
         fn_dict = fmt_dict
     output:
@@ -341,8 +355,24 @@ rule get_contig_list:
                     n = re.split(r'_\d+$',n_)[0]  # Remove "_{digit}" aa reading frame from the contig name
                     fo.write(f'{n}\n')
 
+rule get_list_contigs_6tr:
+    input:
+        fn_dict = fmt_dict
+    output:
+        fn_contig_list_6tr = fmt_contig_list_6tr,
+    run:
+        # Load dict
+        with open(input.fn_dict, 'r') as f:
+            dict_lists = json.load(f)
+        
+        # Merge and save
+        with open(output.fn_contig_list_6tr, 'w') as fo6:
+            for _, names in dict_lists.items():
+                for n_ in names:
+                    fo6.write(f'{n_}\n')
 
-rule get_contig_count_dict:
+
+rule get_dict_contig_count:
     input:
         fn_contig_list = fmt_contig_list
     output:
@@ -438,8 +468,8 @@ rule get_norm_factor:
         
         if sn:
             # Get the norm factor from the table
+            df_norm = pd.read_csv(params.fn_norm_factor)
             try:
-                df_norm = pd.read_csv(params.fn_norm_factor)
                 norm_factor = df_norm.loc[
                     df_norm[params.col_name] == sn,
                     'NORM_FACTOR'
@@ -471,8 +501,9 @@ rule get_norm_factor:
             f.write(str(norm_factor))
 
 
-rule get_contig_taxon_dict:
+rule get_dict_contig_taxon:
     input:
+        fn_contig_list_6tr = fmt_contig_list_6tr,
         fn_contig_list = fmt_contig_list
     output:
         fn_dict_contig_tax = fmt_dict_contig_tax
@@ -488,65 +519,89 @@ rule get_contig_taxon_dict:
         idx_value = lambda w: get_input_table_value(
             w.fn_metat, w.fn_targets, input_table, 'idx_value_diamond'
         ),
+        fn_list_contigs = lambda w, input: get_fn_list_contigs_diamond(
+            w.fn_metat, w.fn_targets, input_table,
+            fn_6tr=input.fn_contig_list_6tr, 
+            fn_std=input.fn_contig_list
+        ),
     shell:
         """
         {params.script} \
             -m {params.fn_diamond} \
-            -t {input.fn_contig_list} \
+            -t {params.fn_list_contigs} \
             -ik {params.idx_key} \
             -ivl {params.idx_value} \
             -o {output.fn_dict_contig_tax} \
             --verbose
         """
 
-# rule get_full_lineage_table:
-#     input:
-#         fn_dict_contig_tax = fmt_dict_contig_tax,
-#         fn_contig_list = fmt_contig_list,
-#     output:
-#         fn_df_contig_tax_full = fmt_df_contig_tax_full
-#     run:
-#         # Load list
-#         with open(input.fn_contig_list, 'r') as f:
-#             list_contigs = f.read().splitlines()
-#         # Load dict
-#         with open(input.fn_dict, 'r') as f:
-#             dict_contig_taxid = json.load(f)
-#         # Get database        
-#         ncbi = NCBITaxa()
-#         # TODO build in a function to check if database needs to be updated
+rule get_table_full_lineage:
+    input:
+        fn_dict_contig_tax = fmt_dict_contig_tax,
+        fn_contig_list_6tr = fmt_contig_list_6tr,
+        fn_contig_list = fmt_contig_list,
+    output:
+        fn_df_contig_tax_full = fmt_df_contig_tax_full
+    params:
+        fn_list_contigs = lambda w, input: get_fn_list_contigs_diamond(
+            w.fn_metat, w.fn_targets, input_table,
+            fn_6tr=input.fn_contig_list_6tr, 
+            fn_std=input.fn_contig_list
+        )
+    run:
+        # Load list
+        with open(params.fn_list_contigs, 'r') as f:
+            list_contigs = f.read().splitlines()
+            
+        # Load dict
+        with open(input.fn_dict_contig_tax, 'r') as f:
+            dict_contig_taxid = json.load(f)
 
-#         with open(output.fn_df_contig_tax_full, 'w') as f:
-#             writer = csv.writer(f)
-#             # Write columns
-#             columns = ['contig']
-#             for rank in config['desired_ranks']:
-#                 columns.append(rank + '_name')
-#                 columns.append(rank + '_taxid')
-#             writer.writerow(columns)
-#             # Write a row for each contig
-#             for contig in list_contigs:
-#                 # Get lineage for contig
-#                 taxid = dict_contig_taxid[contig]
-#                 lineage = ncbi.get_lineage(taxid)
-#                 # Get ranks for lineage
-#                 dict_taxid_rank = ncbi.get_rank(lineage)
-#                 dict_rank_taxid = {v:k for k, v in dict_taxid_rank.items()}
-#                 # Get names for lineage
-#                 names = ncbi.translate_to_names(lineage)
-#                 dict_taxid_name = dict(zip(lineage, names))
-#                 # Get a list of names and taxids for the lineage ordered by rank
-#                 tax_full = [contig]
-#                 for rank in config['desired_ranks']:
-#                     taxid = dict_rank_taxid.get(rank)
-#                     if taxid:
-#                         name = dict_taxid_name[taxid]
-#                     else:
-#                         name = None
-#                     tax_full.append(name)
-#                     tax_full.append(taxid)
-#                 # Write to file
-#                 writer.writerow(tax_full)
+        # Get database        
+        ncbi = NCBITaxa()
+        # TODO build in a function to check if database needs to be updated
+
+        bn, _ = os.path.splitext(output.fn_df_contig_tax_full)
+        fn_failed = bn + '-failed_to_fetch.txt'
+        with open(output.fn_df_contig_tax_full, 'w') as f, open(fn_failed, 'w') as ff:
+            writer = csv.writer(f)
+            # Write columns
+            columns = ['contig']
+            for rank in config['desired_ranks']:
+                columns.append(rank + '_name')
+                columns.append(rank + '_taxid')
+            writer.writerow(columns)
+            # Write a row of ranks for each contig
+            dict_rank_taxid = {}
+            for contig in list_contigs:
+                # Get lineage for contig
+                taxid = dict_contig_taxid.get(contig)
+                if taxid:
+                    taxid = taxid[0]
+                    if not int(taxid) == 0:
+                        try:
+                            lineage = ncbi.get_lineage(taxid)
+                            # Get ranks for lineage
+                            dict_taxid_rank = ncbi.get_rank(lineage)
+                            dict_rank_taxid = {v:k for k, v in dict_taxid_rank.items()}
+                            # Get names for lineage
+                            names = ncbi.translate_to_names(lineage)
+                            dict_taxid_name = dict(zip(lineage, names))
+                        except:
+                            ff.write(f'{taxid}\n')
+                            pass
+                # Get a list of names and taxids for the lineage ordered by rank
+                tax_full = [contig]
+                for rank in config['desired_ranks']:
+                    taxid = dict_rank_taxid.get(rank)
+                    if taxid:
+                        name = dict_taxid_name[taxid]
+                    else:
+                        name = None
+                    tax_full.append(name)
+                    tax_full.append(taxid)
+                # Write to file
+                writer.writerow(tax_full)
             
                 
 

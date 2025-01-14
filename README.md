@@ -62,13 +62,15 @@ options:
 
 ### Use snakemake to search many files
 
-Requires a configuration file as .yaml or .json, and an input table specifying the files and the search parameters.
+Requires a configuration file as .yaml or .json, and an input table as .csv specifying the files to search and a very specific set of parameters required to run the pipeline. Examples of these files are shown in the 'example' folder. Example data is also included to test the pipeline.
+
 
 ```
 $ cd example
 
 $ apptainer run \
     --no-home \
+    -S $HOME
     docker://benjamingrodner/get_metat_dicts \
     Snakefile \
         --configfile config.example.yaml \
