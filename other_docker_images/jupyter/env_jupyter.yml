@@ -1,0 +1,7 @@
+channels:
+  - anaconda
+  - conda-forge
+dependencies:
+  - jupyter
+  - scipy
+  - umap
