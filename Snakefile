@@ -352,6 +352,11 @@ fmt_combine_table_KO_norm_count = (
     + '/dicts_contig_count/tables_norm_count/combined'
     + '/{fn_targets}-table_samples_KOs_norm_count.csv'
 )
+# get_sum_counts
+fmt_sum_counts = (
+    config['snakemake_output_dir'] + '/count_sums/{fn_metat}-{fn_targets}-count_sums'
+    + '/{fn_kallisto}-count_sum.txt'
+)
 # get_dict_contig_taxon
 fmt_dict_contig_tax = (
     config['snakemake_output_dir'] + '/{search_output_dir}'
@@ -365,6 +370,8 @@ fmt_df_contig_tax_full = (
 
 # Write start files
 fns_start = get_fns(fmt_start)
+fn_other_start = config['snakemake_output_dir'] + '/start_files/start.txt'
+fns_start.append(fn_other_start)
 for fn in fns_start:
     if not os.path.exists(fn):
         # Make directories
@@ -378,6 +385,7 @@ for fn in fns_start:
 
 # Scripts
 sc_get_metat_dict = 'sc_get_metat_dict.py'
+sc_get_column_sum = 'sc.get_column_sum.py'
 # sc_get_metat_dict = '../repo-armbrust-metat-search/scripts/sc_get_metat_dict.py'
 
 
@@ -392,6 +400,7 @@ fns_sample_norm_factor = get_fns_sample(fmt_sample_norm_factor, col_check='sn_ty
 fns_table_contig_norm_count = get_fns_sample(fmt_table_contig_norm_count, col_check='sn_type_norm_factor')
 fns_table_KO_norm_count = get_fns_sample(fmt_table_KO_norm_count, col_check='sn_type_norm_factor')
 fns_combine_table_KO_norm_count = get_fns_target(fmt_combine_table_KO_norm_count)
+fns_sum_counts = get_fns_sample(fmt_sum_counts, col_check='sn_type_norm_factor')
 fns_dict_contig_tax = get_fns(fmt_dict_contig_tax, col_check='fn_diamond')
 fns_df_contig_tax_full = get_fns(fmt_df_contig_tax_full, col_check='fn_diamond')
 
@@ -403,7 +412,6 @@ rule all:
     input:
         fns_combine_table_KO_norm_count,
         fns_df_contig_tax_full
-
 
 rule get_dict_KO_contig:
     input:
@@ -611,6 +619,41 @@ rule get_norm_factor:
             f.write(str(norm_factor))
 
 
+rule get_sum_counts:
+    input:
+        fn_start = fn_other_start
+    output:
+        fn_sum_counts = fmt_sum_counts
+    params:
+        script = sc_get_column_sum,
+        fn_kallisto_full = lambda w: get_fn_kallisto_full(
+            w.fn_metat, w.fn_targets, w.fn_kallisto, input_table
+        ),
+        fn_kallisto_tar = lambda w: get_fn_kallisto_tar(
+            w.fn_metat, w.fn_targets, w.fn_kallisto, input_table
+        ),
+        name_value = lambda w: get_input_table_value(
+            w.fn_metat, w.fn_targets, input_table, 'name_value_kallisto'
+        ),
+        columns_line_number = lambda w: get_input_table_value(
+            w.fn_metat, w.fn_targets, input_table, 'col_line_kallisto'
+        ),
+        idx_value = lambda w: get_input_table_value(
+            w.fn_metat, w.fn_targets, input_table, 'idx_value_kallisto'
+        ),
+    shell:
+        """
+        {params.script} \
+            -m {params.fn_kallisto_full} \
+            -mt {params.fn_kallisto_tar} \
+            -vl {params.name_value}  \
+            -c {params.columns_line_number} \
+            -ivl {params.idx_value} \
+            -o {output.fn_sum_counts} \
+            --verbose
+        """        
+
+
 rule get_table_contig_norm_count:
     input:
         fn_sample_norm_factor = fmt_sample_norm_factor,
@@ -657,6 +700,7 @@ rule get_table_KO_norm_count:
         fn_dict_KO_contigs = fmt_dict,
         fn_dict_contig_count = fmt_dict_contig_count,
         fn_sample_norm_factor = fmt_sample_norm_factor,
+        fn_sum_counts = fmt_sum_counts
     output:
         fn_table_KO_norm_count = fmt_table_KO_norm_count,
     params:
@@ -682,6 +726,10 @@ rule get_table_KO_norm_count:
         with open(input.fn_sample_norm_factor, 'r') as f:
             norm_factor = f.read()
         norm_factor = float(norm_factor)
+        # Load sum counts
+        with open(input.fn_sum_counts, 'r') as f:
+            sum_counts = f.read()
+        sum_counts = float(sum_counts)
         # Convert to dict ko -> norm_counts, summing across all contigs in the KO
         dict_KO_norm_count = defaultdict(lambda: 0)
         for KO, contigs in dict_KO_contigs.items():
@@ -714,6 +762,9 @@ rule get_table_KO_norm_count:
             fn_sample_counts, 
             params.sn_type_parse_kallisto
         )
+        # Add sum counts for the sample
+        columns += ['sample_sum_counts']
+        row += [sum_counts * norm_factor]
         # Build row in order by ko list 
         columns += list_KOs
         row += [dict_KO_norm_count[KO] for KO in list_KOs]
@@ -740,6 +791,14 @@ rule combine_table_KO_norm_count:
                     row = fr.readline()
                     fw.write(row)
                 i += 1
+
+
+
+
+
+
+
+
 
 
 rule get_dict_contig_taxon:

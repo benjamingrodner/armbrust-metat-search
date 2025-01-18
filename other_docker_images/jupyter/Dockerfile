@@ -19,6 +19,7 @@ RUN micromamba install --yes \
     'statsmodels' \
     'scikit-learn' \
     'matplotlib' \
+    'seaborn' \
     && \
     jupyter server --generate-config && \
     micromamba clean --all -f -y && \

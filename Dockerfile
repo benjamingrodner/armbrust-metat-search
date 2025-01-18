@@ -15,13 +15,15 @@ FROM debian:12-slim
 # Venv from previous stage
 COPY --from=builder /venv /venv
 # Copy scripts
-WORKDIR /usr/local/bin
+ARG LBIN=/usr/local/bin
+WORKDIR ${LBIN}
 ARG MODE=555
-COPY --chmod=${MODE} scripts/* Snakefile .
+COPY --chmod=${MODE} scripts/* functions/* Snakefile _entrypoint.sh .
 # Variables
-ENV XDG_CACHE_HOME=/tmp/.cache
+ENV XDG_CACHE_HOME=/tmp/.
+ENV PYTHONPATH=${LBIN}
 # When image runs, environment is activated
-COPY --chmod=${MODE} _entrypoint.sh /usr/local/bin/_entrypoint.sh
+# COPY --chmod=${MODE} _entrypoint.sh /usr/local/bin/_entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/_entrypoint.sh"]
 # Default command for docker run
 CMD ["/bin/bash"]
