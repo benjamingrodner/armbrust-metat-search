@@ -11,11 +11,13 @@ Usage:
     import fn_metat_files as fmf
 
 """
-
+from collections import defaultdict
+import tarfile
+import psutil
+import gzip
+import csv
 import os
 import re
-import tarfile
-import gzip
 
 def split_line(line, fn, fn_tar=''):
     """
@@ -182,3 +184,48 @@ def get_column_name_idx(fn, fn_tar, name, cln=1):
         )
 
     return idx_name
+
+
+def tidytable_to_dict(fn, col_key, cols_key2value, cols_key2list, floats=[]):
+    """
+    Given a tidytable format (https://tidyr.tidyverse.org/articles/tidy-data.html), 
+    get a dictionary mapping the values in one column to the values in (an)other column(s).
+
+    Args:
+        fn : (str)
+            Path to tidy table csv.
+        col_key : (str) 
+            Name of the column to be the keys in the dict
+        cols_key2value : (list[str]) 
+            List of column names to map against the key values if there is one values 
+            for each key.
+        cols_key2list : (list[str]) 
+            List of column names to map against the key values if there are multiple values 
+            for each key.
+        floats : (list[str])
+            List of column names to convert from string to float
+    Returns:
+        (dict[str, dict[str | float | list[str] | list[float]]])
+            Dictionary of column name -> key name -> column value(s). 
+    """
+    with open(fn, 'r') as f:
+        csv_reader = csv.DictReader(f)
+        dict_out = defaultdict(lambda: defaultdict(list))
+        for dict_row in csv_reader:
+            key = dict_row[col_key]
+            for cv in cols_key2list:
+                val = dict_row[cv]
+                val = float(val) if cv in floats else val
+                dict_out[cv][key].append(val)
+            for cv in cols_key2value:
+                val = dict_row[cv]
+                val = float(val) if cv in floats else val
+                if not key in dict_out[cv]:
+                    dict_out[cv][key] = val
+    return dict_out
+    
+
+def getmem():
+    process = psutil.Process(os.getpid())
+    memory_info = process.memory_info()
+    print(f"Current memory usage: {memory_info.rss / (1024 * 1024):.2f} MB")

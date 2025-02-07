@@ -18,6 +18,7 @@ import tarfile
 import fnmatch
 import subprocess
 import pandas as pd
+from cl_tree_trim_02 import TreeTrim
 from collections import defaultdict
 os.environ['XDG_DATA_HOME'] = config['XDG_DATA_HOME'] or os.environ['PWD']  # Dir to write the ncbitaxa database (written into 'ete' added to path)
 from ete4 import NCBITaxa
@@ -129,6 +130,61 @@ def get_fns_sample(fmt, col_check=''):
                     ))
     return fns
 
+def get_fns_row_sample(
+    fmt, 
+    fn_metat, fn_targets, input_table, 
+    col_dir='search_output_dir', 
+    col_fn_metat='fn_metat', 
+    col_fn_targets='fn_targets', 
+    col_check=''
+):
+    fns = []
+    row = get_input_table_row(fn_metat, fn_targets, input_table)
+    # Column to check if appending row filenames
+    appnd = False
+    if not col_check:
+        # Build and append filename
+        appnd = True
+    else:
+        if row[col_check]:
+            appnd = True
+    if appnd:
+        # Use the glob expression to get a list of kallisto filenames
+        fns_kallisto = get_glob_fns(
+            row.dir_kallisto, row.glob_kallisto
+        )
+        for fnk_ in fns_kallisto:
+            # Check if the file is a tarball
+            if row.re_kallisto_tar:
+                # Extract the filenames in the tarball 
+                tar_names = get_tar_names(
+                    fnk_, 
+                    row.re_kallisto_tar, 
+                    row.search_output_dir,
+                    row.fn_metat
+                )
+                for fnkt_ in tar_names:  
+                    fnkt = os.path.split(fnkt_)[1]
+                    fnk = os.path.split(fnk_)[1]
+                    fnk_merge = f'{fnk}.{fnkt}'
+                    # Build and append output filename
+                    fns.append(fmt.format(
+                        search_output_dir=row.search_output_dir,
+                        fn_metat=row.fn_metat, 
+                        fn_targets=row.fn_targets,
+                        fn_kallisto=fnk_merge
+                    ))
+            else: 
+                fnk = os.path.split(fnk_)[1]
+                # Build and append filename
+                fns.append(fmt.format(
+                    search_output_dir=row.search_output_dir,
+                    fn_metat=row.fn_metat, 
+                    fn_targets=row.fn_targets,
+                    fn_kallisto=fnk
+                ))
+    return fns
+
 def get_fns_target(fmt, col_dir='search_output_dir', col_fn_targets='fn_targets', col_check=''):
     fns = []
     for index, row in input_table.iterrows():
@@ -209,7 +265,8 @@ def parse_fn_kallisto_sn(fn, sn_type='', get_columns=False):
         try:
             ass, sample, ammend, timep, depth, size, rep = [''] * 7
             if sn_type == 'G1NS':
-                ass, sm_sz, rep, _ = fn.split('.')
+                splt = fn.split('.')
+                ass, sm_sz, rep = splt[:3]
                 sample, sz = sm_sz.split('_',1)
                 size = re.sub('_','.',sz)
             elif sn_type == 'G2NS':
@@ -368,6 +425,36 @@ fmt_df_contig_tax_full = (
     + '/dicts_contig_tax/{fn_metat}-{fn_targets}-df_contig_full_taxonomy.csv'
 )
 
+fmt_sample_tidytable = (
+    config['snakemake_output_dir'] + '/{search_output_dir}'
+    + '/tidy_tables/{fn_metat}-{fn_targets}-tidys'
+    + '/{fn_metat}-{fn_targets}-{fn_kallisto}-tidy.csv'
+)
+
+fmt_mergesample_tidytable = (
+    config['snakemake_output_dir'] + '/{search_output_dir}'
+    + '/tidy_tables/{fn_metat}-{fn_targets}-tidys'
+    + '/{fn_metat}-{fn_targets}-tidy.csv'
+)
+
+
+fmt_mergesample_tidy_trim = (
+    config['snakemake_output_dir'] + '/{search_output_dir}'
+    + '/tidy_tables/{fn_metat}-{fn_targets}-tidys'
+    + '/{fn_metat}-{fn_targets}-tidy_trim.csv'
+)
+
+fmt_mergeall_tidytable = (
+    config['snakemake_output_dir'] + '/{search_output_dir}'
+    + '/tidy_tables'
+    + '/{fn_targets}-tidy_all.csv'
+)
+
+fmt_mergeall_tidy_trim = (
+    config['snakemake_output_dir'] + '/{search_output_dir}'
+    + '/tidy_tables'
+    + '/{fn_targets}-tidy_all_trim.csv'
+)
 # Write start files
 fns_start = get_fns(fmt_start)
 fn_other_start = config['snakemake_output_dir'] + '/start_files/start.txt'
@@ -403,6 +490,11 @@ fns_combine_table_KO_norm_count = get_fns_target(fmt_combine_table_KO_norm_count
 fns_sum_counts = get_fns_sample(fmt_sum_counts, col_check='sn_type_norm_factor')
 fns_dict_contig_tax = get_fns(fmt_dict_contig_tax, col_check='fn_diamond')
 fns_df_contig_tax_full = get_fns(fmt_df_contig_tax_full, col_check='fn_diamond')
+fns_sample_tidytable = get_fns_sample(fmt_sample_tidytable, col_check='sn_type_norm_factor')
+fns_mergesample_tidytable = get_fns(fmt_mergesample_tidytable, col_check='fn_diamond')
+fns_mergesample_tidy_trim = get_fns(fmt_mergesample_tidy_trim, col_check='fn_diamond')
+fn_mergeall_tidytable = get_fns_target(fmt_mergeall_tidytable)
+fn_mergeall_tidy_trim = get_fns_target(fmt_mergeall_tidy_trim)
 
 # =============================================================================
 # Snake rules
@@ -411,7 +503,8 @@ fns_df_contig_tax_full = get_fns(fmt_df_contig_tax_full, col_check='fn_diamond')
 rule all:
     input:
         fns_combine_table_KO_norm_count,
-        fns_df_contig_tax_full
+        fn_mergeall_tidy_trim,
+        fns_mergesample_tidy_trim,
 
 rule get_dict_KO_contig:
     input:
@@ -795,12 +888,6 @@ rule combine_table_KO_norm_count:
 
 
 
-
-
-
-
-
-
 rule get_dict_contig_taxon:
     input:
         fn_contig_list_6tr = fmt_contig_list_6tr,
@@ -903,5 +990,185 @@ rule get_table_full_lineage:
                 # Write to file
                 writer.writerow(tax_full)
             
-         
+rule get_sample_tidytable:
+    input:
+        fn_dict_KO_contigs = fmt_dict,
+        fn_dict_contig_tax = fmt_dict_contig_tax,
+        fn_dict_contig_count = fmt_dict_contig_count
+    output:
+        fn_sample_tidytable = fmt_sample_tidytable
+    params:
+        fn_kallisto_tar = lambda w: get_fn_kallisto_tar(
+            w.fn_metat, w.fn_targets, w.fn_kallisto, input_table
+        ),
+        sn_type_parse_kallisto = lambda w: get_input_table_value(
+            w.fn_metat, w.fn_targets, input_table, 
+            'sn_type_parse_kallisto'
+        ),
+        type_contig_tax = lambda w: get_input_table_value(
+                w.fn_metat, w.fn_targets, input_table, 'type_diamond_contig_name'
+            )
+    run:
+        # Load kos
+        with open(input.fn_dict_KO_contigs, 'r') as f:
+            dict_ko_contigs = json.load(f)
+        # Invert dict
+        dict_contig_ko = {}
+        for ko, contigs in dict_ko_contigs.items():
+            for c in contigs:
+                dict_contig_ko[c] = ko
+        # Load taxa
+        with open(input.fn_dict_contig_tax, 'r') as f:
+            dict_contig_tax = json.load(f)
+        # Load counts
+        with open(input.fn_dict_contig_count, 'r') as f:
+            dict_contig_count = json.load(f)
+        # Get the kallisto filename
+        fn_sample_counts = wildcards.fn_kallisto
+        if params.fn_kallisto_tar:
+            fn_sample_counts = params.fn_kallisto_tar 
+        # Get columns list
+        sample_info_columns = parse_fn_kallisto_sn('', get_columns=True)
+        columns = ['contig','fn_sample_counts'] + sample_info_columns + ['KO','taxon','estcounts']
+        # Get sample info
+        sample_info = parse_fn_kallisto_sn(
+            fn_sample_counts, 
+            params.sn_type_parse_kallisto
+        )
+        # Write lines
+        with open(output.fn_sample_tidytable, 'w') as fo:
+            writer = csv.writer(fo)
+            writer.writerow(columns)
+            countsum = 0
+            n_tax = 0
+            for c, ko in dict_contig_ko.items():
+                c_ = re.sub(r'_\d+$','',c)      
+                ctax = c if params.type_contig_tax else c_
+                tax = dict_contig_tax.get(ctax)
+                tax = tax[0] if tax else 0
+                if tax:
+                    n_tax += 1
+                # tax = dict_contig_tax[c].get(c)
+                # tax = tax[0] if tax else 0
+                count = dict_contig_count.get(c_)
+                count = count[0] if count else 0
+                countsum += float(count)
+                row = [c, fn_sample_counts] + sample_info + [ko, tax, count]
+                writer.writerow(row)
+        if countsum == 0:
+            raise ValueError(
+                    f"""
+                    Counts were not read from {input.fn_dict_contig_count}, or there are no counts.
+                    """
+                ) 
+        if n_tax == 0:
+            raise ValueError(
+                    f"""
+                    Taxa were not read from {input.fn_dict_contig_count}, or there are no taxonomic annotations.
+                    """
+                ) 
 
+rule merge_sample_tidy_tables:
+    input:
+        fns_sample_tidytable = lambda w: get_fns_row_sample(
+            fmt_sample_tidytable,
+            w.fn_metat, w.fn_targets, input_table
+        )
+    output:
+        fn_mergesample_tidytable = fmt_mergesample_tidytable
+    run:
+        with open(output.fn_mergesample_tidytable, 'w') as fw:
+            i = 0
+            for fn in input.fns_sample_tidytable:
+                with open(fn, 'r') as fr:
+                    columns = fr.readline()
+                    if i == 0:
+                        fw.write(columns)
+                    for row in fr:
+                        fw.write(row)
+                i += 1        
+
+rule trim_sample_taxon_trees:
+    input:
+        fn_mergesample_tidytable = fmt_mergesample_tidytable
+    output:
+        fn_mergesample_tidy_trim = fmt_mergesample_tidy_trim
+    params:
+        filtfunc = config['tree_trim']['filtfunc'],
+        thresh = config['tree_trim']['thresh'],
+        minsamples = config['tree_trim']['minsamples'],
+    run:
+        # Build tree
+        t = TreeTrim(input.fn_mergesample_tidytable)
+        # Trim tree
+        t.trim_tree(
+            filt_func_name=params.filtfunc,
+            thresh=int(params.thresh), 
+            minsamples=int(params.minsamples)
+        )
+        # Add trimmed taxa column to tidy table
+        with open(input.fn_mergesample_tidytable, 'r') as fr:
+            with open(output.fn_mergesample_tidy_trim, 'w') as fw:
+                reader = csv.DictReader(fr)
+                columns = reader.fieldnames + ['taxon_trim']
+                writer = csv.DictWriter(fw, delimiter=',', fieldnames=columns)
+                # Write columns line
+                writer.writeheader()
+                # write rest of lines
+                for row in reader:
+                    contig = row['contig']
+                    taxtrim = t.dict_contig_taxtrim.get(contig)
+                    taxtrim = taxtrim if taxtrim else 0
+                    row['taxon_trim'] = taxtrim
+                    writer.writerow(row)
+
+rule merge_all_tidy_tables:
+    input:
+        fns_sample_tidytable = fns_sample_tidytable
+    output:
+        fn_mergeall_tidytable = fmt_mergeall_tidytable
+    run:
+        with open(output.fn_mergeall_tidytable, 'w') as fw:
+            i = 0
+            for fn in input.fns_sample_tidytable:
+                with open(fn, 'r') as fr:
+                    columns = fr.readline()
+                    if i == 0:
+                        fw.write(columns)
+                    for row in fr:
+                        fw.write(row)
+                i += 1    
+
+rule trim_merge_all_taxon_tree:
+    input:
+        fn_mergeall_tidytable = fmt_mergeall_tidytable
+    output:
+        fn_mergeall_tidy_trim = fmt_mergeall_tidy_trim
+    params:
+        filtfunc = config['tree_trim']['filtfunc'],
+        thresh = config['tree_trim']['thresh'],
+        minsamples = config['tree_trim']['minsamples'],
+    run:
+        # Build tree
+        t = TreeTrim(input.fn_mergeall_tidytable)
+        # Trim tree
+        t.trim_tree(
+            filt_func_name=params.filtfunc,
+            thresh=int(params.thresh), 
+            minsamples=int(params.minsamples)
+        )
+        # Add trimmed taxa column to tidy table
+        with open(input.fn_mergeall_tidytable, 'r') as fr:
+            with open(output.fn_mergeall_tidy_trim, 'w') as fw:
+                reader = csv.DictReader(fr)
+                columns = reader.fieldnames + ['taxon_trim']
+                writer = csv.DictWriter(fw, delimiter=',', fieldnames=columns)
+                # Write columns line
+                writer.writeheader()
+                # write rest of lines
+                for row in reader:
+                    contig = row['contig']
+                    taxtrim = t.dict_contig_taxtrim.get(contig)
+                    taxtrim = taxtrim if taxtrim else 0
+                    row['taxon_trim'] = taxtrim
+                    writer.writerow(row)

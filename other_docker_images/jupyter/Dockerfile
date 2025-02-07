@@ -25,8 +25,9 @@ RUN micromamba install --yes \
     micromamba clean --all -f -y && \
     jupyter lab clean
 
-ENV XDG_CACHE_HOME=/tmp/.cache
-ENV XDG_CONFIG_HOME=/tmp/.config
-ENV XDG_DATA_HOME=/tmp/.local/share
-ENV XDG_BIN_HOME=/tmp/.local/bin
-ENV IPYTHONDIR=/tmp/.local/var
+WORKDIR /app
+ENV XDG_CACHE_HOME=/app/.cache
+ENV XDG_CONFIG_HOME=/app/.config
+ENV XDG_DATA_HOME=/app/.local/share
+ENV XDG_BIN_HOME=/app/.local/bin
+ENV IPYTHONDIR=/app/.local/var

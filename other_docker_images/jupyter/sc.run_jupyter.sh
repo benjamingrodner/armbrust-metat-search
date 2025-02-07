@@ -1,5 +1,8 @@
+
+mkdir -p jupyter_home
+
 apptainer run \
-    --no-home \
+    --home jupyter_home:/app\
     --bind /mnt/nfs/projects/armbrust-metat \
     --bind /scratch/bgrodner \
     docker://benjamingrodner/metat-jupyter \

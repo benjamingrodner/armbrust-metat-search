@@ -1,6 +1,8 @@
 dicts_iron_KO_contig_example
-metat_search_results_example
+example_results_metat_search
 .snakemake
 .etetoolkit
 etetoolkit
 ete
+__pycache__
+

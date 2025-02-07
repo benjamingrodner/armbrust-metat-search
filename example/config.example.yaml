@@ -2,6 +2,10 @@ input_table: file_table.example.csv
 snakemake_output_dir: example_results_metat_search
 XDG_DATA_HOME:  # Dir to write the ncbitaxa database (written into 'ete' added to path)
                 # Leave empty to indicate the current execution directory 
+tree_trim:
+  filtfunc: nkos_in_gt_minsamples
+  thresh: 30
+  minsamples: 4
 desired_ranks: [
   'superkingdom', 
   'phylum', 

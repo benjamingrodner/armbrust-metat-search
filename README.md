@@ -11,6 +11,12 @@ For example given a list of Kegg orthologies, find all contigs annotated with th
 Custom build:
 
 ```
+cd other_docker_images/builder
+docker build --platform <> --tag <username>/<image-builder> .
+cd ../..
+```
+Now edit the file "Docker" so that the builder image loads from your build.
+```
 docker build --platform <> --tag <username>/<image> .
 docker push <username>/<image>
 ```
