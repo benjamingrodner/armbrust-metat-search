@@ -18,10 +18,13 @@ import tarfile
 import fnmatch
 import subprocess
 import pandas as pd
-from cl_tree_trim_02 import TreeTrim
 from collections import defaultdict
 os.environ['XDG_DATA_HOME'] = config['XDG_DATA_HOME'] or os.environ['PWD']  # Dir to write the ncbitaxa database (written into 'ete' added to path)
 from ete4 import NCBITaxa
+
+## TEMP
+sys.path.append('/scratch/bgrodner/repo-armbrust-metat-search')
+from functions.cl_tree_trim_02 import TreeTrim
 
 
 # =============================================================================
@@ -263,7 +266,7 @@ def get_fn_kallisto_tar(fn_metat, fn_targets, fn_kallisto, input_table):
 def parse_fn_kallisto_sn(fn, sn_type='', get_columns=False):
     if not get_columns:
         try:
-            ass, sample, ammend, timep, depth, size, rep = [''] * 7
+            ass, sample, lat, ammend, timep, depth, size, rep = [''] * 8
             if sn_type == 'G1NS':
                 splt = fn.split('.')
                 ass, sm_sz, rep = splt[:3]
@@ -273,6 +276,16 @@ def parse_fn_kallisto_sn(fn, sn_type='', get_columns=False):
                 ass, sample, depth, sz, rep, _ = fn.split('.')
                 size = re.sub('_','.',sz)
             elif sn_type == 'G3NS':
+                meta_fn = input_table.loc[
+                    input_table['name'] == 'G3NS', 
+                    'fn_sample_metadata'
+                ].values[0]
+                meta = pd.read_csv(meta_fn)
+                sid = os.path.splitext(fn)[0]
+                meta_sample = meta.loc[meta['SampleID'] == sid, :]
+                depth = str(meta_sample['Depth'].values[0])
+                lat = meta_sample['Latitude'].values[0]
+                lat = str(round(float(lat),2))
                 ass_sm, dp_sz_rep = fn.split('_', 1)
                 ass = re.match(r'.+NS', ass_sm)[0]
                 sample = re.search(r'UW\d+', ass_sm)[0]
@@ -293,7 +306,20 @@ def parse_fn_kallisto_sn(fn, sn_type='', get_columns=False):
                 _, ass, sample, depth, sz, rep, _, _ = fn.split('.')
                 size = re.sub('_','.',sz)
             elif sn_type == 'G3PA.UW':
-                ass, sample, _, _, _, _ = fn.split('.')
+                meta_fn = input_table.loc[
+                    input_table['name'] == 'G3PA.UW', 
+                    'fn_sample_metadata'
+                ].values[0]
+                meta = pd.read_csv(meta_fn)
+                ass, sample_, _, _, _, _ = fn.split('.')
+                meta_sample = meta.loc[meta['Alias2'] == sample_, :]
+                size = str(meta_sample['Filter'].values[0])
+                depth = str(meta_sample['Depth'].values[0])
+                rep = str(meta_sample['Replicate'].values[0])
+                sample_list = str(meta_sample['Alias1'].values[0]).split(' ')
+                sample = sample_list[0]
+                if '#' in sample_list[1]:
+                    sample += sample_list[1]
             elif sn_type == 'G3PA.diel':
                 ass1, ass2, sample, rep, _, _, _, _ = fn.split('.')
                 ass = f'{ass1}.{ass2}'
@@ -311,7 +337,7 @@ def parse_fn_kallisto_sn(fn, sn_type='', get_columns=False):
                     Sample name parse type not provided (sn_type_parse_kallisto column in file table)
                     """
                 )        
-            return [ass, sample, ammend, timep, depth, size, rep]
+            return [ass, sample, lat, ammend, timep, depth, size, rep]
         except:
             raise ValueError(
                 f"""
@@ -322,7 +348,7 @@ def parse_fn_kallisto_sn(fn, sn_type='', get_columns=False):
                 """
             )
     else:
-        return ['assembly', 'sample', 'ammendment', 'timepoint', 'depth', 'size', 'rep']
+        return ['assembly', 'sample', 'latitude','ammendment', 'timepoint', 'depth', 'size', 'rep']
 
 def get_fn_list_contigs_diamond(fn_metat, fn_targets, input_table, fn_6tr, fn_std):
     type_contig_name = get_input_table_value(
@@ -430,11 +456,21 @@ fmt_sample_tidytable = (
     + '/tidy_tables/{fn_metat}-{fn_targets}-tidys'
     + '/{fn_metat}-{fn_targets}-{fn_kallisto}-tidy.csv'
 )
+fmt_sample_metadata = (
+    config['snakemake_output_dir'] + '/{search_output_dir}'
+    + '/tidy_tables/{fn_metat}-{fn_targets}-tidys'
+    + '/{fn_metat}-{fn_targets}-{fn_kallisto}-metadata.csv'
+)
 
 fmt_mergesample_tidytable = (
     config['snakemake_output_dir'] + '/{search_output_dir}'
     + '/tidy_tables/{fn_metat}-{fn_targets}-tidys'
     + '/{fn_metat}-{fn_targets}-tidy.csv'
+)
+fmt_mergesample_metadata = (
+    config['snakemake_output_dir'] + '/{search_output_dir}'
+    + '/tidy_tables/{fn_metat}-{fn_targets}-tidys'
+    + '/{fn_metat}-{fn_targets}-metadata.csv'
 )
 
 
@@ -443,18 +479,44 @@ fmt_mergesample_tidy_trim = (
     + '/tidy_tables/{fn_metat}-{fn_targets}-tidys'
     + '/{fn_metat}-{fn_targets}-tidy_trim.csv'
 )
+fmt_mergesample_dict_taxtrim_contigs = (
+    config['snakemake_output_dir'] + '/{search_output_dir}'
+    + '/tidy_tables/{fn_metat}-{fn_targets}-tidys'
+    + '/{fn_metat}-{fn_targets}-dict_taxtrim_contigs.json'
+)
+fmt_mergesample_tensor_taxtrim_tidy = (
+    config['snakemake_output_dir'] + '/{search_output_dir}'
+    + '/tidy_tables/{fn_metat}-{fn_targets}-tidys'
+    + '/{fn_metat}-{fn_targets}-barnacle_tensor_tidy.csv'
+)
 
 fmt_mergeall_tidytable = (
     config['snakemake_output_dir'] + '/{search_output_dir}'
-    + '/tidy_tables'
+    + '/tidy_tables/merge_all'
     + '/{fn_targets}-tidy_all.csv'
 )
-
-fmt_mergeall_tidy_trim = (
+fmt_mergeall_metadata = (
     config['snakemake_output_dir'] + '/{search_output_dir}'
-    + '/tidy_tables'
-    + '/{fn_targets}-tidy_all_trim.csv'
+    + '/tidy_tables/merge_all'
+    + '/{fn_targets}-metadata.csv'
 )
+
+fmt_mergeall_dict_taxtrim_contigs = (
+    config['snakemake_output_dir'] + '/{search_output_dir}'
+    + '/tidy_tables/merge_all'
+    + '/{fn_targets}-dict_taxtrim_contigs.csv'
+)
+fmt_mergeall_tensor_taxtrim_tidy = (
+    config['snakemake_output_dir'] + '/{search_output_dir}'
+    + '/tidy_tables/merge_all'
+    + '/{fn_targets}-barnacle_tensor_tidy.csv'
+)
+
+# fmt_mergeall_tidy_trim = (
+#     config['snakemake_output_dir'] + '/{search_output_dir}'
+#     + '/tidy_tables'
+#     + '/{fn_targets}-tidy_all_trim.csv'
+# )
 # Write start files
 fns_start = get_fns(fmt_start)
 fn_other_start = config['snakemake_output_dir'] + '/start_files/start.txt'
@@ -491,10 +553,13 @@ fns_sum_counts = get_fns_sample(fmt_sum_counts, col_check='sn_type_norm_factor')
 fns_dict_contig_tax = get_fns(fmt_dict_contig_tax, col_check='fn_diamond')
 fns_df_contig_tax_full = get_fns(fmt_df_contig_tax_full, col_check='fn_diamond')
 fns_sample_tidytable = get_fns_sample(fmt_sample_tidytable, col_check='sn_type_norm_factor')
+fns_sample_metadata = get_fns_sample(fmt_sample_metadata, col_check='sn_type_norm_factor')
 fns_mergesample_tidytable = get_fns(fmt_mergesample_tidytable, col_check='fn_diamond')
 fns_mergesample_tidy_trim = get_fns(fmt_mergesample_tidy_trim, col_check='fn_diamond')
+fns_mergesample_tensor_taxtrim_tidy = get_fns(fmt_mergesample_tensor_taxtrim_tidy, col_check='fn_diamond')
 fn_mergeall_tidytable = get_fns_target(fmt_mergeall_tidytable)
-fn_mergeall_tidy_trim = get_fns_target(fmt_mergeall_tidy_trim)
+fn_mergeall_tidytable = get_fns_target(fmt_mergeall_tidytable)
+fn_mergeall_tensor_taxtrim_tidy = get_fns_target(fmt_mergeall_tensor_taxtrim_tidy)
 
 # =============================================================================
 # Snake rules
@@ -502,9 +567,8 @@ fn_mergeall_tidy_trim = get_fns_target(fmt_mergeall_tidy_trim)
 
 rule all:
     input:
-        fns_combine_table_KO_norm_count,
-        fn_mergeall_tidy_trim,
-        fns_mergesample_tidy_trim,
+        fns_mergesample_tensor_taxtrim_tidy,
+        fn_mergeall_tensor_taxtrim_tidy,
 
 rule get_dict_KO_contig:
     input:
@@ -996,7 +1060,8 @@ rule get_sample_tidytable:
         fn_dict_contig_tax = fmt_dict_contig_tax,
         fn_dict_contig_count = fmt_dict_contig_count
     output:
-        fn_sample_tidytable = fmt_sample_tidytable
+        fn_sample_tidytable = fmt_sample_tidytable,
+        # fn_sample_metadata = fmt_sample_metadata
     params:
         fn_kallisto_tar = lambda w: get_fn_kallisto_tar(
             w.fn_metat, w.fn_targets, w.fn_kallisto, input_table
@@ -1027,14 +1092,43 @@ rule get_sample_tidytable:
         fn_sample_counts = wildcards.fn_kallisto
         if params.fn_kallisto_tar:
             fn_sample_counts = params.fn_kallisto_tar 
+        # # Get sample metdata columns
+        # sample_info_columns = parse_fn_kallisto_sn('', get_columns=True)
+        # # Get sample metadata
+        # sample_info = parse_fn_kallisto_sn(
+        #     fn_sample_counts, 
+        #     params.sn_type_parse_kallisto
+        # )
+        # # Get sample name without replicate
+        # namenorep = ''
+        # for col, info in zip(sample_info_columns, sample_info):
+        #     if col != 'rep':
+        #         namenorep += f"{str(row[c])}-"
+        # assm_sample = namenorep[:-1]
+        # # Add info to rows
+        # sample_info_columns += ['fn_sample_counts', 'assm_sample']
+        # sample_info += [fn_sample_counts, assm_sample]
+        # # Write to metadata file
+        # with open(output.fn_sample_metadata, 'w') as f:
+        #     writer = csv.writer(f)
+        #     writer.writerow(sample_info_columns)
+        #     writer.writerow(sample_info)        
+        # Get sample plus assembly identifier
+        # dict_si = dict(zip(sample_info_columns, sample_info))
+        # assm_sample = dict_si['assembly'] + '-' + dict_si['sample']
+        # add identifiers to columns and metadata 
+        # sample_info_columns += ['fn_sample_counts', 'assm_sample']
+        # sample_info += [fn_sample_counts, assm_sample]
+        # sample_info_columns.append('fn_sample_counts')
+        # sample_info.append(fn_sample_counts)
+        # # Write to metadata file
+        # with open(output.fn_sample_metadata, 'w') as f:
+        #     writer = csv.writer(f)
+        #     writer.writerow(sample_info_columns)
+        #     writer.writerow(sample_info)
         # Get columns list
-        sample_info_columns = parse_fn_kallisto_sn('', get_columns=True)
-        columns = ['contig','fn_sample_counts'] + sample_info_columns + ['KO','taxon','estcounts']
-        # Get sample info
-        sample_info = parse_fn_kallisto_sn(
-            fn_sample_counts, 
-            params.sn_type_parse_kallisto
-        )
+        columns = ['contig','fn_sample_counts', 'KO','taxon','estcounts']
+        rep = dict(zip(sample_info_columns, sample_info))['rep']
         # Write lines
         with open(output.fn_sample_tidytable, 'w') as fo:
             writer = csv.writer(fo)
@@ -1053,7 +1147,7 @@ rule get_sample_tidytable:
                 count = dict_contig_count.get(c_)
                 count = count[0] if count else 0
                 countsum += float(count)
-                row = [c, fn_sample_counts] + sample_info + [ko, tax, count]
+                row = [c, fn_sample_counts, ko, tax, count]
                 writer.writerow(row)
         if countsum == 0:
             raise ValueError(
@@ -1068,15 +1162,70 @@ rule get_sample_tidytable:
                     """
                 ) 
 
+rule get_sample_metadata:
+    input:
+        fn_dict_KO_contigs = fmt_dict,
+        fn_dict_contig_tax = fmt_dict_contig_tax,
+        fn_dict_contig_count = fmt_dict_contig_count
+    output:
+        fn_sample_metadata = fmt_sample_metadata
+    params:
+        fn_kallisto_tar = lambda w: get_fn_kallisto_tar(
+            w.fn_metat, w.fn_targets, w.fn_kallisto, input_table
+        ),
+        sn_type_parse_kallisto = lambda w: get_input_table_value(
+            w.fn_metat, w.fn_targets, input_table, 
+            'sn_type_parse_kallisto'
+        ),
+        type_contig_tax = lambda w: get_input_table_value(
+                w.fn_metat, w.fn_targets, input_table, 'type_diamond_contig_name'
+            )
+    run:
+        # Get the kallisto filename
+        fn_sample_counts = wildcards.fn_kallisto
+        if params.fn_kallisto_tar:
+            fn_sample_counts = params.fn_kallisto_tar 
+        # Get sample metdata columns
+        sample_info_columns = parse_fn_kallisto_sn('', get_columns=True)
+        # Get sample metadata
+        sample_info = parse_fn_kallisto_sn(
+            fn_sample_counts, 
+            params.sn_type_parse_kallisto
+        )
+        # Get sample name without replicate
+        namenorep = ''
+        for col, info in zip(sample_info_columns, sample_info):
+            if col != 'rep':
+                if info:
+                    namenorep += f"{info}-"
+        assm_sample = namenorep[:-1]
+        # Add info to rows
+        sample_info_columns += ['fn_sample_counts', 'assm_sample']
+        sample_info += [fn_sample_counts, assm_sample]
+        # Write to metadata file
+        with open(output.fn_sample_metadata, 'w') as f:
+            writer = csv.writer(f)
+            writer.writerow(sample_info_columns)
+            writer.writerow(sample_info)
+
+
+
+
 rule merge_sample_tidy_tables:
     input:
         fns_sample_tidytable = lambda w: get_fns_row_sample(
             fmt_sample_tidytable,
             w.fn_metat, w.fn_targets, input_table
-        )
+        ),
+        # fn_sample_metadata = lambda w: get_fns_row_sample(
+        #     fmt_sample_metadata,
+        #     w.fn_metat, w.fn_targets, input_table
+        # ),
     output:
-        fn_mergesample_tidytable = fmt_mergesample_tidytable
+        fn_mergesample_tidytable = fmt_mergesample_tidytable,
+        fn_mergesample_metadata = fmt_mergesample_metadata
     run:
+        # Write table
         with open(output.fn_mergesample_tidytable, 'w') as fw:
             i = 0
             for fn in input.fns_sample_tidytable:
@@ -1086,48 +1235,46 @@ rule merge_sample_tidy_tables:
                         fw.write(columns)
                     for row in fr:
                         fw.write(row)
-                i += 1        
+                i += 1   
+        # # Write metadata     
+        # with open(output.fn_mergesample_metadata, 'w') as fw:
+        #     i = 0
+        #     for fn in input.fn_sample_metadata:
+        #         with open(fn, 'r') as fr:
+        #             columns = fr.readline()
+        #             row = fr.readline()
+        #             if i == 0:
+        #                 fw.write(columns)
+        #             fw.write(row)
+        #         i += 1
 
-rule trim_sample_taxon_trees:
+rule merge_all_metadata:
     input:
-        fn_mergesample_tidytable = fmt_mergesample_tidytable
+        fns_sample_metadata = fns_sample_metadata,
     output:
-        fn_mergesample_tidy_trim = fmt_mergesample_tidy_trim
-    params:
-        filtfunc = config['tree_trim']['filtfunc'],
-        thresh = config['tree_trim']['thresh'],
-        minsamples = config['tree_trim']['minsamples'],
+        fn_mergeall_metadata = fmt_mergeall_metadata,
     run:
-        # Build tree
-        t = TreeTrim(input.fn_mergesample_tidytable)
-        # Trim tree
-        t.trim_tree(
-            filt_func_name=params.filtfunc,
-            thresh=int(params.thresh), 
-            minsamples=int(params.minsamples)
-        )
-        # Add trimmed taxa column to tidy table
-        with open(input.fn_mergesample_tidytable, 'r') as fr:
-            with open(output.fn_mergesample_tidy_trim, 'w') as fw:
-                reader = csv.DictReader(fr)
-                columns = reader.fieldnames + ['taxon_trim']
-                writer = csv.DictWriter(fw, delimiter=',', fieldnames=columns)
-                # Write columns line
-                writer.writeheader()
-                # write rest of lines
-                for row in reader:
-                    contig = row['contig']
-                    taxtrim = t.dict_contig_taxtrim.get(contig)
-                    taxtrim = taxtrim if taxtrim else 0
-                    row['taxon_trim'] = taxtrim
-                    writer.writerow(row)
+        # Write metadata     
+        with open(output.fn_mergeall_metadata, 'w') as fw:
+            i = 0
+            for fn in input.fns_sample_metadata:
+                with open(fn, 'r') as fr:
+                    columns = fr.readline()
+                    row = fr.readline()
+                    if i == 0:
+                        fw.write(columns)
+                    fw.write(row)
+                i += 1 
 
 rule merge_all_tidy_tables:
     input:
-        fns_sample_tidytable = fns_sample_tidytable
+        fns_sample_tidytable = fns_sample_tidytable,
+        # fns_sample_metadata = fns_sample_metadata,
     output:
-        fn_mergeall_tidytable = fmt_mergeall_tidytable
+        fn_mergeall_tidytable = fmt_mergeall_tidytable,
+        # fn_mergeall_metadata = fmt_mergeall_metadata,
     run:
+        # Write table
         with open(output.fn_mergeall_tidytable, 'w') as fw:
             i = 0
             for fn in input.fns_sample_tidytable:
@@ -1137,38 +1284,183 @@ rule merge_all_tidy_tables:
                         fw.write(columns)
                     for row in fr:
                         fw.write(row)
-                i += 1    
+                i += 1   
+        # # Write metadata     
+        # with open(output.fn_mergeall_metadata, 'w') as fw:
+        #     i = 0
+        #     for fn in input.fns_sample_metadata:
+        #         with open(fn, 'r') as fr:
+        #             columns = fr.readline()
+        #             row = fr.readline()
+        #             if i == 0:
+        #                 fw.write(columns)
+        #             fw.write(row)
+        #         i += 1 
 
-rule trim_merge_all_taxon_tree:
+
+rule trim_sample_taxon_trees_build_tidy_tensor:
     input:
-        fn_mergeall_tidytable = fmt_mergeall_tidytable
+        fn_mergesample_tidytable = fmt_mergesample_tidytable,
+        fn_mergeall_metadata = fmt_mergeall_metadata,
+        # fn_mergesample_metadata = fmt_mergesample_metadata
     output:
-        fn_mergeall_tidy_trim = fmt_mergeall_tidy_trim
+        fn_mergesample_dict_taxtrim_contigs = fmt_mergesample_dict_taxtrim_contigs,
+        fn_mergesample_tensor_taxtrim_tidy = fmt_mergesample_tensor_taxtrim_tidy
+        # fn_mergesample_tidy_trim = fmt_mergesample_tidy_trim
     params:
         filtfunc = config['tree_trim']['filtfunc'],
         thresh = config['tree_trim']['thresh'],
         minsamples = config['tree_trim']['minsamples'],
     run:
         # Build tree
-        t = TreeTrim(input.fn_mergeall_tidytable)
+        t = TreeTrim(
+            input.fn_mergesample_tidytable,
+            col_contig='contig', 
+            col_ko='KO',
+            col_taxon='taxon',
+            col_estcounts='estcounts',
+            col_sample='fn_sample_counts'
+        )
         # Trim tree
         t.trim_tree(
             filt_func_name=params.filtfunc,
             thresh=int(params.thresh), 
             minsamples=int(params.minsamples)
         )
-        # Add trimmed taxa column to tidy table
-        with open(input.fn_mergeall_tidytable, 'r') as fr:
-            with open(output.fn_mergeall_tidy_trim, 'w') as fw:
-                reader = csv.DictReader(fr)
-                columns = reader.fieldnames + ['taxon_trim']
-                writer = csv.DictWriter(fw, delimiter=',', fieldnames=columns)
-                # Write columns line
-                writer.writeheader()
-                # write rest of lines
-                for row in reader:
-                    contig = row['contig']
-                    taxtrim = t.dict_contig_taxtrim.get(contig)
-                    taxtrim = taxtrim if taxtrim else 0
-                    row['taxon_trim'] = taxtrim
-                    writer.writerow(row)
+        # save dict taxtrim contig
+        with open(output.fn_mergesample_dict_taxtrim_contigs, 'w') as f:
+            json.dump(
+                t.dict_taxtrim_contigs, 
+                f, 
+                sort_keys=True, 
+                indent=4, 
+                separators=(',', ': ')
+            )
+        # Get dict sample rep
+        metadata = pd.read_csv(input.fn_mergeall_metadata)
+        dict_sam_namenorep = dict(zip(metadata['fn_sample_counts'], metadata['assm_sample']))
+        dict_sam_rep = dict(zip(metadata['fn_sample_counts'], metadata['rep']))
+        # cols_namenorep = metadata.columns[
+        #     (metadata.columns != 'fn_sample_counts')
+        #     & (metadata.columns != 'rep')
+        # ]
+        # dict_sam_rep = {}
+        # dict_sam_namenorep = {}
+        # for _, row in metadata.iterrows():
+        #     dict_sam_rep[row['fn_sample_counts']] = row['rep']
+        #     namenorep = ''
+        #     for c in cols_namenorep:
+        #         namenorep += f"{str(row[c])}-"
+        #     dict_sam_namenorep[row['fn_sample_counts']] = namenorep[:-1]
+        # dict_sam_rep = dict(zip(
+        #     metadata['assm_sample'], metadata['rep']
+        # ))
+        # Build tensor sample x gene x taxon as tidytable
+        # dict_taxtrim_ko_sample = defaultdict(lambda: defaultdict(dict))
+        columns = ['assm_sample','KO','taxon_trim','estcounts','rep']
+        with open(output.fn_mergesample_tensor_taxtrim_tidy, 'w') as f:
+            writer = csv.writer(f)
+            writer.writerow(columns)
+            for taxtrim, d1 in t.dict_taxtrim_ko_sam_estcounts.items():
+                for ko, d2 in d1.items():
+                    for sam, ec in d2.items():
+                        rep = dict_sam_rep[sam]
+                        namenorep = dict_sam_namenorep[sam]
+                        row = [namenorep, ko, taxtrim, ec, rep]
+                        writer.writerow(row)
+
+        # # Add trimmed taxa column to tidy table
+        # with open(input.fn_mergesample_tidytable, 'r') as fr:
+        #     with open(output.fn_mergesample_tidy_trim, 'w') as fw:
+        #         reader = csv.DictReader(fr)
+        #         columns = reader.fieldnames + ['taxon_trim']
+        #         writer = csv.DictWriter(fw, delimiter=',', fieldnames=columns)
+        #         # Write columns line
+        #         writer.writeheader()
+        #         # write rest of lines
+        #         for row in reader:
+        #             contig = row['contig']
+        #             taxtrim = t.dict_contig_taxtrim.get(contig)
+        #             taxtrim = taxtrim if taxtrim else 0
+        #             row['taxon_trim'] = taxtrim
+        #             writer.writerow(row)
+
+
+rule trim_merge_all_taxon_tree_build_tidy_tensor:
+    input:
+        fn_mergeall_tidytable = fmt_mergeall_tidytable,
+        fn_mergeall_metadata = fmt_mergeall_metadata,
+    output:
+        fn_mergeall_dict_taxtrim_contigs = fmt_mergeall_dict_taxtrim_contigs,
+        fn_mergeall_tensor_taxtrim_tidy = fmt_mergeall_tensor_taxtrim_tidy,
+    params:
+        filtfunc = config['tree_trim_merge']['filtfunc'],
+        thresh = config['tree_trim_merge']['thresh'],
+        minsamples = config['tree_trim_merge']['minsamples'],
+        minbatches = config['tree_trim_merge']['minbatches'],
+    run:
+        # Get sample batch dict
+        metadata = pd.read_csv(input.fn_mergeall_metadata)
+        dict_sample_batch = dict(zip(
+            metadata['fn_sample_counts'],
+            metadata['assembly']
+        ))
+
+        # Build tree
+        t = TreeTrim(
+            input.fn_mergeall_tidytable,
+            col_contig='contig', 
+            col_ko='KO',
+            col_taxon='taxon',
+            col_estcounts='estcounts',
+            col_sample='fn_sample_counts'
+        )
+        # Trim tree
+        t.trim_tree(
+            filt_func_name=params.filtfunc,
+            thresh=int(params.thresh),
+            dict_sample_batch=dict_sample_batch,
+            minsamples=int(params.minsamples),
+            minbatches=int(params.minbatches),
+        )
+        # save dict taxtrim contig
+        with open(output.fn_mergeall_dict_taxtrim_contigs, 'w') as f:
+            json.dump(
+                t.dict_taxtrim_contigs, 
+                f, 
+                sort_keys=True, 
+                indent=4, 
+                separators=(',', ': ')
+            )
+        # Get dict sample rep
+        dict_sam_namenorep = dict(zip(metadata['fn_sample_counts'], metadata['assm_sample']))
+        dict_sam_rep = dict(zip(metadata['fn_sample_counts'], metadata['rep']))
+        # cols_namenorep = metadata.columns[
+        #     (metadata.columns != 'fn_sample_counts')
+        #     & (metadata.columns != 'rep')
+        # ]
+        # dict_sam_rep = {}
+        # dict_sam_namenorep = {}
+        # for _, row in metadata.iterrows():
+        #     dict_sam_rep[row['fn_sample_counts']] = row['rep']
+        #     namenorep = ''
+        #     for c in cols_namenorep:
+        #         namenorep += f"{str(row[c])}-"
+        #     dict_sam_namenorep[row['fn_sample_counts']] = namenorep[:-1]
+        # dict_sam_rep = dict(zip(
+        #     metadata['assm_sample'], metadata['rep']
+        # ))
+        # Build tensor sample x gene x taxon as tidytable
+        # dict_taxtrim_ko_sample = defaultdict(lambda: defaultdict(dict))
+        columns = ['assm_sample','KO','taxon_trim','estcounts','rep']
+        with open(output.fn_mergeall_tensor_taxtrim_tidy, 'w') as f:
+            writer = csv.writer(f)
+            writer.writerow(columns)
+            for taxtrim, d1 in t.dict_taxtrim_ko_sam_estcounts.items():
+                for ko, d2 in d1.items():
+                    for sam, ec in d2.items():
+                        rep = dict_sam_rep[sam]
+                        namenorep = dict_sam_namenorep[sam]
+                        row = [namenorep, ko, taxtrim, ec, rep]
+                        writer.writerow(row)
+

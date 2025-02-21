@@ -4,8 +4,11 @@ XDG_DATA_HOME:  # Dir to write the ncbitaxa database (written into 'ete' added t
                 # Leave empty to indicate the current execution directory 
 tree_trim:
   filtfunc: nkos_in_gt_minsamples
+  filtfunc_merge: nkos_in_gt_minbatches
   thresh: 30
   minsamples: 4
+  minsamples_merge: 3
+  minbatches: 1
 desired_ranks: [
   'superkingdom', 
   'phylum', 

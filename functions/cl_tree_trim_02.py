@@ -22,19 +22,16 @@ from time import time
 import numpy as np
 
 
-
 ###################################################################################################
 # Object
 ###################################################################################################
 
 
-        
-
 class TreeTrim:
     """
     Class to manges functions for trimming trees based on thresholding at each node.      
     """
-    
+
     def __init__(
             self, 
             fn_tidycsv, 
@@ -64,12 +61,13 @@ class TreeTrim:
         # Builtin vars
         self.ncbi = NCBITaxa()  # ete4 access to ncbi database
         self.dict_name_filtfunc = {
-            "mean_nkos": self.get_mean_nkos,
             "nkos_in_gt_minsamples": self.get_nkos_in_gt_minsamples,
+            "nkos_in_gt_minbatches": self.get_nkos_in_gt_minbatches,
         }  # Functions used to filter tree
+            # "mean_nkos": self.get_mean_nkos,
 
         # Execute functions
-        print('Loading dicts...')
+        print(f'Loading dicts for {fn_tidycsv}...')
         fnf.getmem()
         t0 = time()
         self._get_dicts()  # Load from tidytable
@@ -77,30 +75,29 @@ class TreeTrim:
         el = (t1 - t0)
         elm = el // 60
         els = el % 60
-        print(f"Time to load dicts: {elm} min {els} sec")
+        print(f"Time to load dicts from {fn_tidycsv}: {elm} min {els} sec")
         fnf.getmem()
 
         self._get_set_taxids()  # All taxids present
         self.tree = self.ncbi.get_topology(self.set_taxids)  # Build tree
         self._get_dict_taxon_contigs()  # invert taxon contig dict
-        self.nsamples = len(next(iter(self.dict_contig[self.col_estcounts].values())))  # number of samples
-
+        # self.nsamples = len(next(iter(self.dict_contig[self.col_sample].values())))  # number of samples
 
     def _get_dicts(self):
         """
         Convert the tidytable csv into nested dictionaries
         """
         # Load the csv file as a dict mapping contigs to other values
-        col_key = self.col_contig
-        cols_key2value = [self.col_ko, self.col_taxon]
-        cols_key2list = [self.col_estcounts, self.col_sample]
+        kwargs = {
+            'col_key': self.col_contig,
+            'cols_key2value': [self.col_ko, self.col_taxon],
+            'cols_key2list': [self.col_estcounts, self.col_sample],
+            'floats': [self.col_estcounts]
+        }
         self.dict_contig = fnf.tidytable_to_dict(
             fn = self.fn_tidycsv, 
-            col_key=col_key,
-            cols_key2value=cols_key2value,
-            cols_key2list=cols_key2list, 
-            floats=[self.col_estcounts]
-            )
+            **kwargs
+        )
         # # Convert taxon and ko dicts to independent dicts
         # self.dict_contig_taxon = {}
         # self.dict_contig_ko = {}
@@ -111,8 +108,6 @@ class TreeTrim:
         #     self.dict_contig_ko[c] = d[self.col_ko]
         #     self.dict_contig_estcounts[c] = d[self.col_estcounts]
         #     self.dict_contig_samples[c] = d[self.col_sample]
-
-        
 
     def _get_set_taxids(self):
         """
@@ -129,7 +124,6 @@ class TreeTrim:
                     pass
         self.set_taxids = set(taxids_all)
 
-
     def _get_taxon_contigs_full_lineage(self):
         """
         Get the full lineage for each contig and then build a dictionary mapping
@@ -142,7 +136,6 @@ class TreeTrim:
                 for l in lin:
                     self.dict_taxfull_contigs[str(l)].append(c)
 
-
     def _get_dict_taxon_contigs(self):
         """
         Invert the key and value for dict_contig_taxon and build a list of contigs mapped at each
@@ -153,10 +146,11 @@ class TreeTrim:
             if tid in self.set_taxids:
                 self.dict_taxon_contigs[tid].append(c)
 
-
     # filter value calculation
     def get_mean_nkos(self, contigs):
         """
+       #  Deprecated  # 
+
         Given a set of contigs within a taxon, count the number of KOs with nonzero read counts
         in each sample and take the mean.
 
@@ -180,12 +174,11 @@ class TreeTrim:
             _nkos = len(kos) if kos else 0
             nkos.append(_nkos)
         return np.mean(nkos) if nkos else 0
-    
 
     def get_nkos_in_gt_minsamples(self, contigs, minsamples):
         """
         Given a set of contigs within a taxon, count the number of genes with nonzero read counts
-        in more than a minimum number of samples. This value then used to 
+        in at least a minimum number of samples. 
 
         Params:
             contigs : list[str]
@@ -196,6 +189,8 @@ class TreeTrim:
         Returns:
             float
                 Number of genes in greater than the minimum number of samples
+            dict[dict[float]]
+                mapping gene to a dict mapping samples to estcounts summed across contigs                
         """
 
         dict_ko_sam_estcounts = defaultdict(lambda: 
@@ -214,8 +209,60 @@ class TreeTrim:
                 ko_in_nsam += bool(ec)
             if ko_in_nsam >= minsamples:
                 nkos += 1
-        return nkos            
+        return nkos, dict_ko_sam_estcounts
 
+    def get_nkos_in_gt_minbatches(self, contigs, dict_sample_batch, minsamples=3, minbatches=2):
+        """
+        Given a set of contigs within a taxon, count the number of genes with nonzero read counts
+        in at least a minimum number of samples across a minimum number of batches. 
+
+        Params:
+            contigs : list[str]
+                List of contig ids
+            dict_sample_batch : dict[str]
+                Dictionary mapping sample name to batch name
+            minsamples : int
+                Minimum number of samples a gene has to be present in (in a batch) for a batch
+                to be counted
+            minbatches : int
+                Minimum number of batches a gene has to be present in to be counted
+
+        Returns:
+            float
+                Number of genes in >= minsamples in >= minbatches
+            dict[dict[float]]
+                mapping gene to a dict mapping samples to estcounts summed across contigs
+
+        """    
+        # Build output dict, sum ec counts across contigs for each gene
+        dict_ko_sam_estcounts = defaultdict(lambda: 
+            defaultdict(float)
+        )
+        for c in contigs:
+            ko = self.dict_contig[self.col_ko][c]
+            sams = self.dict_contig[self.col_sample][c]
+            estcounts = self.dict_contig[self.col_estcounts][c]
+            for s, ec in zip(sams, estcounts):
+                batch = dict_sample_batch[s]
+                dict_ko_sam_estcounts[ko][s] += float(ec)
+        # Count the number of kos
+        nkos = 0
+        for ko, dict_sam_estcounts in dict_ko_sam_estcounts.items():
+            # Get the number of samples this ko is in for each batch
+            ko_in_nsam = defaultdict(float)
+            for s, ec in dict_sam_estcounts.items():
+                b = dict_sample_batch[s]
+                ko_in_nsam[b] += bool(ec)
+            # Count the number of batches
+            nbatch = 0
+            for _, nsam in ko_in_nsam.items():
+                # Only count batches that meet the criteria
+                if nsam >= minsamples:
+                    nbatch += 1
+            # Only count kos that meet the criteria
+            if nbatch >= minbatches:
+                nkos += 1
+        return nkos, dict_ko_sam_estcounts
 
     def trim_tree(self, filt_func_name, thresh, **fncargs):
         """
@@ -227,10 +274,10 @@ class TreeTrim:
         Params: 
             filt_func_name : str
                 Specify which function to use to measure the contigs at a node. Current options are
-                'mean_nkos', 'nkos_in_gt_minsamples'.
+                'nkos_in_gt_minsamples' and 'nkos_in_gt_minbatches'.
             thresh : float
                 Threshold value used to decide whether to keep or trim a node
-            **fnargs : various
+            **fncargs : various
                 Keyword arguments to pass to the function specified in filt_func_name
         
         Returns:
@@ -239,6 +286,7 @@ class TreeTrim:
         # Remove tree levels below filter value
         dict_taxtrim_contigs = defaultdict(list)
         # Traverse from leaves to root
+        dict_taxtrim_ko_sam_estcounts = {}
         for n in self.tree.traverse(strategy='postorder'):
             tid = n.name
             # Get any new contigs from children
@@ -251,7 +299,7 @@ class TreeTrim:
             if not n.is_root:
                 # if the mean nkos is less than desired
                 func = self.dict_name_filtfunc[filt_func_name]
-                filtvalue = func(contigs, **fncargs)
+                filtvalue, dict_ko_sam_estcounts = func(contigs, **fncargs)
                 if filtvalue < thresh:
                     # nkos = len(set([self.dict_contig[self.col_ko][c] for c in contigs]))
                     # print(f'{tid} trimmed...with {len(contigs)} contigs and {nkos} kos')
@@ -267,8 +315,11 @@ class TreeTrim:
                         del dict_taxtrim_contigs[tid]
                 else:
                     dict_taxtrim_contigs[tid] = contigs
+                    dict_taxtrim_ko_sam_estcounts[tid] = dict_ko_sam_estcounts
             else:
                 dict_taxtrim_contigs[tid] = contigs
+        # Store tensor dict
+        self.dict_taxtrim_ko_sam_estcounts = dict_taxtrim_ko_sam_estcounts
         # Store tax -> contig mapping
         self.dict_taxtrim_contigs = dict_taxtrim_contigs
         self.dict_contig_taxtrim = {}
