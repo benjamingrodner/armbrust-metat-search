@@ -47,6 +47,13 @@ def split_line(line, fn, fn_tar=''):
         return re.split(r'\t', line)
     if ext == '.tab':
         return re.split(r'\s+', line)
+    if ext == '.tar':
+        raise ValueError(
+            f'''
+            File {fn} appears to be a tarball.
+            Please provide a subfile path as "fn_tar=SUBFILE_PATH" to parse the line.
+            '''
+        )
     
 
 

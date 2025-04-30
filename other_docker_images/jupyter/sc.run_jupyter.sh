@@ -3,7 +3,7 @@ mkdir -p jupyter_home
 
 apptainer run \
     --home jupyter_home:/app\
-    --bind /mnt/nfs/projects/armbrust-metat \
+    --bind /mnt/nfs/projects \
     --bind /scratch/bgrodner \
     docker://benjamingrodner/metat-jupyter \
         jupyter notebook \

@@ -4,7 +4,11 @@ Tools for searching the Armbrust lab Gradients metaT dataset.
 
 Currently set up for dictionary construction. Search each line of the metaT tables for a set of keys and map hits to the corresponding value in the line. Result is a .json file with dictionary mapping each key -> list of values. 
 
-For example given a list of Kegg orthologies, find all contigs annotated with those KOs.
+"Snakefile" - given a list of Kegg orthologies, find all contigs annotated with those KOs.
+
+"Snakefile_find_taxon" - given a list of taxa, find all contigs annotated as those taxa.
+
+"Snakefile_all_taxa_estcounts" - For all taxa, sum all estcounts for all contigs in each taxon.
 
 ## Docker setup
 

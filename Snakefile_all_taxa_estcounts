@@ -1,0 +1,1688 @@
+#!/usr/bin/env -S snakemake -s
+
+"""
+Pipeline to extract data for a list of taxa from the Armbrust Gradients metaT dataset
+
+"""
+
+# =============================================================================
+# Imports
+# =============================================================================
+
+import os
+import csv
+import json
+import math
+import glob
+import tarfile
+import fnmatch
+import subprocess
+import pandas as pd
+from collections import defaultdict
+os.environ['XDG_DATA_HOME'] = config['XDG_DATA_HOME'] or os.environ['PWD']  # Dir to write the ncbitaxa database (written into 'ete' added to path)
+from ete4 import NCBITaxa
+
+## TEMP
+sys.path.append(config['path_repository'])
+from functions.cl_tree_trim_02 import TreeTrim
+import functions.fn_metat_files as fnf
+
+
+# =============================================================================
+# Functions
+# =============================================================================
+
+def get_tar_names(fn_tar, re_tar, batch):
+    # Make tar name dir
+    out_dir = config['snakemake_output_dir'] + '/tar_names'
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
+    # Make filename
+    fn_tar_names = os.path.split(fn_tar)[1]
+    fn_tar_names = re.sub('.tar.gz','-tar_names.txt', fn_tar_names)
+    fn_tar_names_full = f'{out_dir}/{batch}-{fn_tar_names}'
+    # Check if the file already exists
+    if not os.path.exists(fn_tar_names_full):
+        print('Getting tar sub-filenames')
+        tar_names = []
+        # Read the tar names
+        with tarfile.open(fn_tar, "r:gz") as tar:
+            for name in tar:
+                n = name.name
+                if bool(re.search(re_tar, n)):
+                    tar_names.append(n)
+        # Write file
+        with open(fn_tar_names_full, 'w') as f:
+            for line in tar_names:
+                f.write(f"{line}\n")
+    # If it already exists, read the names
+    else:
+        with open(fn_tar_names_full, 'r') as f:
+            tar_names = f.read().splitlines()
+    return tar_names
+
+def get_glob_fns(dir_glob, fn_glob):
+    if dir_glob:
+        return(glob.glob(f'{dir_glob}/{fn_glob}'))
+    else:
+        return(glob.glob(fn_glob))
+
+
+
+def get_fns(fmt, col_dir='search_output_dir', col_fn_metat='fn_metat', col_fn_targets='fn_targets', col_check=''):
+    fns = []
+    for index, row in input_table.iterrows():
+        fn = fmt.format(
+            search_output_dir=row[col_dir],
+            fn_metat=row[col_fn_metat], 
+            fn_targets=row[col_fn_targets],
+        )
+        if not col_check:
+            # Build and append filename
+            fns.append(fn)
+        else:
+            if row[col_check]:
+                fns.append(fn)
+
+    return fns
+
+def get_fns_sample(fmt, col_check=''):
+    fns = []
+    for index, row in input_table.iterrows():
+        # Column to check if appending row filenames
+        appnd = False
+        if not col_check:
+            # Build and append filename
+            appnd = True
+        else:
+            if row[col_check]:
+                appnd = True
+        if appnd:
+            # Use the glob expression to get a list of kallisto filenames
+            fns_kallisto = get_glob_fns(
+                row.dir_kallisto, row.glob_kallisto
+            )
+            for fnk_ in fns_kallisto:
+                # Check if the file is a tarball
+                if row.re_kallisto_tar:
+                    # Extract the filenames in the tarball 
+                    tar_names = get_tar_names(
+                        fnk_, 
+                        row.re_kallisto_tar, 
+                        row.batch
+                    )
+                    for fnkt_ in tar_names:  
+                        fnkt = os.path.split(fnkt_)[1]
+                        fnk = os.path.split(fnk_)[1]
+                        fnk_merge = f'{fnk}.{fnkt}'
+                        # Build and append output filename
+                        fns.append(fmt.format(
+                            batch=row.batch, 
+                            fn_kallisto=fnk_merge
+                        ))
+                else: 
+                    fnk = os.path.split(fnk_)[1]
+                    # Build and append filename
+                    fns.append(fmt.format(
+                        batch=row.batch,
+                        fn_kallisto=fnk
+                    ))
+    return fns
+
+def get_fns_row_sample(
+    fmt, 
+    batch, input_table, 
+    col_dir='search_output_dir', 
+    col_fn_metat='fn_metat', 
+    col_fn_targets='fn_targets', 
+    col_check=''
+):
+    fns = []
+    row = get_input_table_row(batch, input_table)
+    # Column to check if appending row filenames
+    appnd = False
+    if not col_check:
+        # Build and append filename
+        appnd = True
+    else:
+        if row[col_check]:
+            appnd = True
+    if appnd:
+        # Use the glob expression to get a list of kallisto filenames
+        fns_kallisto = get_glob_fns(
+            row.dir_kallisto, row.glob_kallisto
+        )
+        for fnk_ in fns_kallisto:
+            # Check if the file is a tarball
+            if row.re_kallisto_tar:
+                # Extract the filenames in the tarball 
+                tar_names = get_tar_names(
+                    fnk_, 
+                    row.re_kallisto_tar, 
+                    row.search_output_dir,
+                    row.fn_metat
+                )
+                for fnkt_ in tar_names:  
+                    fnkt = os.path.split(fnkt_)[1]
+                    fnk = os.path.split(fnk_)[1]
+                    fnk_merge = f'{fnk}.{fnkt}'
+                    # Build and append output filename
+                    fns.append(fmt.format(
+                        search_output_dir=row.search_output_dir,
+                        fn_metat=row.fn_metat, 
+                        fn_targets=row.fn_targets,
+                        fn_kallisto=fnk_merge
+                    ))
+            else: 
+                fnk = os.path.split(fnk_)[1]
+                # Build and append filename
+                fns.append(fmt.format(
+                    search_output_dir=row.search_output_dir,
+                    fn_metat=row.fn_metat, 
+                    fn_targets=row.fn_targets,
+                    fn_kallisto=fnk
+                ))
+    return fns
+
+def get_fns_target(fmt, col_dir='search_output_dir', col_fn_targets='fn_targets', col_check=''):
+    fns = []
+    for index, row in input_table.iterrows():
+        fn = fmt.format(
+            search_output_dir=row[col_dir],
+            fn_targets=row[col_fn_targets],
+        )
+        if not col_check:
+            # Build and append filename
+            fns.append(fn)
+        else:
+            if row[col_check]:
+                fns.append(fn)
+    return set(fns)
+
+
+def get_input_table_value(batch, input_table, column):
+    return input_table.loc[(input_table.batch == batch), column].values[0]
+
+def get_input_table_row(batch, input_table):
+    return input_table.loc[(input_table.batch == batch), :].squeeze()
+
+
+def get_fn_full(batch, input_table, col_dir, col_fn):
+    path = get_input_table_value(batch, input_table, col_dir)
+    fn = get_input_table_value(batch, input_table, col_fn)
+    if path:
+        return path + f'/{fn}'
+    else:
+        return fn
+
+def get_fn_kallisto_full(batch, fn_kallisto, input_table):
+    row = get_input_table_row(batch, input_table)
+    # Split wildcard to get kallisto tarball filename
+    if row.re_kallisto_tar:
+        regex = fnmatch.translate(row.glob_kallisto)
+        regex = regex.rstrip('\Z')
+        fn_kallisto = re.match(regex, fn_kallisto)[0]
+    # Assemble full filename
+    fns_glob = get_glob_fns(
+        row.dir_kallisto, row.glob_kallisto
+    )
+    for fnk_full in fns_glob:
+        if fn_kallisto in fnk_full:
+            return fnk_full
+
+def get_fn_kallisto_tar(batch, fn_kallisto, input_table):
+    row = get_input_table_row(
+        batch, input_table,
+    )
+    # Split wildcard to get kallisto tarball filename
+    if row.re_kallisto_tar:
+        regex = fnmatch.translate(row.glob_kallisto + '.')
+        regex = regex.rstrip('\Z')
+        fn_kallisto_tar = re.split(regex, fn_kallisto)[1]
+        return fn_kallisto_tar
+    # Assemble full filename
+    else:
+        return ''
+
+# Parse the kallisto sample name (the sub tar name in tarball)
+def get_meta(sn_type):
+    meta_fn = input_table.loc[
+        input_table['sn_type_parse_kallisto'] == sn_type, 
+        'fn_sample_metadata'
+    ].values[0]
+    return pd.read_csv(meta_fn)
+
+def get_size_lat_depth_rep_timep(meta_sample, rnd_lat, skip=[]):
+    vals = []
+    if not 'size' in skip:
+        size = str(float(meta_sample['Filter'].values[0]))
+        size += 'um'
+        vals.append(size)
+    if not 'lat' in skip:
+        lat = str(round(float(meta_sample['Latitude'].values[0]), rnd_lat))
+        lat += 'deg'
+        vals.append(lat)
+    if not 'depth' in skip:
+        depth = str(float(meta_sample['Depth'].values[0]))
+        depth += 'm'
+        vals.append(depth)
+    if not 'rep' in skip:
+        rep = meta_sample['Replicate'].values[0]
+        vals.append(rep)
+    if not 'timep' in skip:
+        timep = meta_sample['Datetime'].values[0]
+        timep = re.sub('/','_', timep)
+        timep = re.sub(r'\s','-', timep)
+        vals.append(timep)
+    return vals
+
+def parse_fn_kallisto_sn(fn='', sn_type='', get_columns=False, rnd_lat=2):
+    if not get_columns:
+        ass, sample, lat, ammend, timep, depth, size, rep = [''] * 8
+        if sn_type == 'G1NS':
+            splt = fn.split('.')
+            ass, sm_sz, rp = splt[:3]
+            sample, sz = sm_sz.split('_',1)
+            # size = str(float(re.sub('_','.',sz)))
+            alias2 = sm_sz + rp
+            meta = get_meta(sn_type)
+            meta_sample = meta.loc[meta['Alias2'] == alias2, :]
+            size, lat, depth, rep, timep = get_size_lat_depth_rep_timep(meta_sample, rnd_lat)
+        elif sn_type == 'G2NS':
+            ass, sample, dp, sz, rp, _ = fn.split('.')
+            meta = get_meta(sn_type)
+            alias2 = f'{sample}.{dp}.{sz}.{rp}'
+            meta_sample = meta.loc[meta['Alias2'] == alias2, :]
+            size, lat, depth, rep, timep = get_size_lat_depth_rep_timep(meta_sample, rnd_lat)
+        elif sn_type == 'G3NS':
+            meta = get_meta(sn_type)
+            sid = os.path.splitext(fn)[0]
+            meta_sample = meta.loc[meta['SampleID'] == sid, :]
+            size, lat, depth, rep, timep = get_size_lat_depth_rep_timep(meta_sample, rnd_lat)
+            ass = re.match(r'.+NS', fn)[0]
+            sample = re.search(r'UW\d+_\d', fn)[0]
+        elif sn_type == 'G5':
+            ass, sample, ammend, timep, rep, _ = fn.split('.')
+        elif sn_type == 'D1':
+            ass, sm_rep_tp, _, _ = fn.split('.')
+            sample, rep, timep = sm_rep_tp.split('_')
+        elif sn_type == 'G1PA':
+            meta = get_meta(sn_type)
+            ass, fn_ = fn.split('.', 1)
+            sid = re.match(r'.+(?=\.abundance)', fn_)[0]
+            sid = re.sub(r'\.','_',sid)
+            meta_sample = meta.loc[meta['SampleID'] == sid, :]
+            size, lat, depth, rep, timep = get_size_lat_depth_rep_timep(meta_sample, rnd_lat)
+            sample, _ = fn_.split('_', 1)
+        elif sn_type == 'G2PA':
+            _, ass, sample, dp, sz, rp, _, _ = fn.split('.')
+            meta = get_meta(sn_type)
+            sid = f"{sample}.{dp}.{sz}.{rp}"
+            meta_sample = meta.loc[meta['SampleID'] == sid, :]
+            size, lat, rep = get_size_lat_depth_rep_timep(
+                meta_sample, 
+                rnd_lat, 
+                skip=['depth','timep']
+            )
+            depth = str(float(dp[:-1])) + 'm'
+            # size = re.sub('_','.',sz)
+        elif sn_type == 'G3PA.UW':
+            meta = get_meta(sn_type)
+            ass, sample_ = fn.split('.')[:2]
+            meta_sample = meta.loc[meta['Alias2'] == sample_, :]
+            size, lat, depth, rep, timep = get_size_lat_depth_rep_timep(meta_sample, rnd_lat)
+            sample_list = str(meta_sample['Alias1'].values[0]).split(' ')
+            sample = sample_list[0]
+            if '#' in sample_list[1]:
+                sample += sample_list[1]
+        elif sn_type == 'G3PA.diel':
+            ass1, ass2, sample, rp, _, _, _, _ = fn.split('.')
+            ass = f'{ass1}.{ass2}'
+            meta = get_meta(sn_type)
+            sid = f"{ass}.{sample}.{rp}"
+            meta_sample = meta.loc[meta['SampleID'] == sid, :]
+            size, lat, depth, rep, timep = get_size_lat_depth_rep_timep(meta_sample, rnd_lat)
+
+        elif sn_type == 'G3PA.PM':
+            ass = sn_type
+            sample = re.search(r'UW\d+_\d', fn)[0]
+            meta = get_meta(sn_type)
+            sid = re.match(r'.+(?=\.unstranded)', fn)[0]
+            meta_sample = meta.loc[meta['SampleID'] == sid, :]
+            size, lat, depth, rep, timep = get_size_lat_depth_rep_timep(meta_sample, rnd_lat)
+        else:
+            raise ValueError(
+                f"""
+                Sample name parse type {sn_type} not configured or not provided 
+                (sn_type_parse_kallisto column in file table)
+                """
+            )
+        return [ass, sample, lat, ammend, timep, depth, size, rep]
+    else:
+        return ['assembly', 'sample', 'latitude','ammendment', 'timepoint', 'depth', 'size', 'rep']
+
+def get_fn_list_contigs_diamond(batch, input_table, fn_6tr, fn_std):
+    type_contig_name = get_input_table_value(
+            batch, input_table, 'type_diamond_contig_name'
+        )
+    if type_contig_name == '6tr':
+        return fn_6tr
+    else: 
+        return fn_std
+
+
+
+# def get_fn_metat_full(fn_metat, fn_targets, input_table):
+#     path = get_input_table_value(fn_metat, fn_targets, input_table, 'path_metat')
+#     if path:
+#         return path + f'/{fn_metat}'
+#     else:
+#         return fn_metat
+
+
+# def get_fn_targets_full(fn_metat, fn_targets, input_table):
+#     path = get_input_table_value(fn_metat, fn_targets, input_table, 'path_targets')
+#     if path:
+#         return path + f'/{fn_targets}'
+#     else:
+#         return fn_targets
+
+
+# =============================================================================
+# Setup
+# =============================================================================
+
+
+input_table = pd.read_csv(
+    config['input_table'],
+    keep_default_na=False
+)
+
+
+fmt_all_taxon_estcounts = (
+    config['snakemake_output_dir'] + '/sample_taxa_estcounts'
+    + '/{batch}/{batch}-{fn_kallisto}-count_sum.txt'
+)
+
+fmt_tidy_all_taxon_estcounts = (
+    config['snakemake_output_dir'] + '/sample_taxa_estcounts'
+    + '/{batch}/{batch}-{fn_kallisto}-taxid_estcounts-tidy.txt'
+)
+
+fn_merge_all_taxa_estcounts = (
+    config['snakemake_output_dir'] + '/sample_taxa_estcounts'
+    + '/merge-sample_taxid_estcounts-tidy.txt'
+)
+
+# # format get_KO_contig_dict outputs
+# fmt_dict_taxon_contigs = (
+#     config['snakemake_output_dir'] + '/{search_output_dir}'
+#     + '/dicts_taxon_contigs/{fn_metat}-{fn_targets}-dict_taxon_contigs.json'
+# )
+# fmt_contig_list = (
+#     config['snakemake_output_dir'] + '/{search_output_dir}'
+#     + '/contig_lists/{fn_metat}-{fn_targets}-dictolist.txt'
+# )
+# # format get_contig_count_dict outputs
+# fmt_dict_contig_count = (
+#     config['snakemake_output_dir'] + '/{search_output_dir}'
+#     + '/dicts_contig_count/{fn_metat}-{fn_targets}-{fn_kallisto}-dict_contig_count.json'
+# )
+# # format get_contig_count_dict outputs
+# fmt_dict_contig_ko = (
+#     config['snakemake_output_dir'] + '/{search_output_dir}'
+#     + '/dicts_contig_ko/{fn_metat}-{fn_targets}-dict_contig_ko.json'
+# )
+
+# # format start files
+# fmt_start = (
+#     config['snakemake_output_dir'] + '/start_files/{search_output_dir}'
+#     + '/{fn_metat}-{fn_targets}.txt'
+# )
+# # format dict_to_list outputs
+# fmt_contig_list_6tr = (
+#     config['snakemake_output_dir'] + '/{search_output_dir}'
+#     + '/{fn_metat}-{fn_targets}-dictolist_6tr.txt'
+# )
+# # format get_norm_factor outputs
+# fmt_sample_norm_factor = (
+#     config['snakemake_output_dir'] + '/{search_output_dir}'
+#     + '/dicts_contig_count/norm_factors/{fn_metat}-{fn_targets}-norm_factors'
+#     + '/{fn_metat}-{fn_targets}-{fn_kallisto}-norm_factor.txt'
+# )
+# # get_table_contig_norm_count
+# fmt_table_contig_norm_count = (
+#     config['snakemake_output_dir'] + '/{search_output_dir}'
+#     + '/dicts_contig_count/tables_norm_count/{fn_metat}-{fn_targets}-tables_norm_count'
+#     + '/{fn_metat}-{fn_targets}-{fn_kallisto}-table_norm_count.csv'
+# )
+# # get_table_KO_norm_count
+# fmt_table_KO_norm_count = (
+#     config['snakemake_output_dir'] + '/{search_output_dir}'
+#     + '/dicts_contig_count/tables_norm_count/{fn_metat}-{fn_targets}-tables_norm_count'
+#     + '/{fn_metat}-{fn_targets}-{fn_kallisto}-table_KO_norm_count.csv'
+# )
+# # combine_table_KO_norm_count
+# fmt_combine_table_KO_norm_count = (
+#     config['snakemake_output_dir'] + '/{search_output_dir}'
+#     + '/dicts_contig_count/tables_norm_count/combined'
+#     + '/{fn_targets}-table_samples_KOs_norm_count.csv'
+# )
+# # get_sum_counts
+# fmt_sum_counts = (
+#     config['snakemake_output_dir'] + '/count_sums/{fn_metat}-{fn_targets}-count_sums'
+#     + '/{fn_kallisto}-count_sum.txt'
+# )
+# # get_dict_contig_taxon
+# fmt_dict_contig_tax = (
+#     config['snakemake_output_dir'] + '/{search_output_dir}'
+#     + '/dicts_contig_tax/{fn_metat}-{fn_targets}-dict_contig_taxid.json'
+# )
+# # format taxon full table
+# fmt_df_contig_tax_full = (
+#     config['snakemake_output_dir'] + '/{search_output_dir}'
+#     + '/dicts_contig_tax/{fn_metat}-{fn_targets}-df_contig_full_taxonomy.csv'
+# )
+
+# fmt_sample_tidytable = (
+#     config['snakemake_output_dir'] + '/{search_output_dir}'
+#     + '/tidy_tables/{fn_metat}-{fn_targets}-tidys'
+#     + '/{fn_metat}-{fn_targets}-{fn_kallisto}-tidy.csv'
+# )
+# fmt_sample_metadata = (
+#     config['snakemake_output_dir'] + '/{search_output_dir}'
+#     + '/tidy_tables/{fn_metat}-{fn_targets}-tidys'
+#     + '/{fn_metat}-{fn_targets}-{fn_kallisto}-metadata.csv'
+# )
+
+# fmt_mergesample_tidytable = (
+#     config['snakemake_output_dir'] + '/{search_output_dir}'
+#     + '/tidy_tables/{fn_metat}-{fn_targets}-tidys'
+#     + '/{fn_metat}-{fn_targets}-tidy.csv'
+# )
+# fmt_mergesample_metadata = (
+#     config['snakemake_output_dir'] + '/{search_output_dir}'
+#     + '/tidy_tables/{fn_metat}-{fn_targets}-tidys'
+#     + '/{fn_metat}-{fn_targets}-metadata.csv'
+# )
+
+
+# fmt_mergesample_tidy_trim = (
+#     config['snakemake_output_dir'] + '/{search_output_dir}'
+#     + '/tidy_tables/{fn_metat}-{fn_targets}-tidys'
+#     + '/{fn_metat}-{fn_targets}-tidy_trim.csv'
+# )
+# fmt_mergesample_dict_taxtrim_contigs = (
+#     config['snakemake_output_dir'] + '/{search_output_dir}'
+#     + '/tidy_tables/{fn_metat}-{fn_targets}-tidys'
+#     + '/{fn_metat}-{fn_targets}-dict_taxtrim_contigs.json'
+# )
+# fmt_mergesample_tensor_taxtrim_tidy = (
+#     config['snakemake_output_dir'] + '/{search_output_dir}'
+#     + '/tidy_tables/{fn_metat}-{fn_targets}-tidys'
+#     + '/{fn_metat}-{fn_targets}-barnacle_tensor_tidy.csv'
+# )
+
+# fmt_mergeall_tidytable = (
+#     config['snakemake_output_dir'] + '/{search_output_dir}'
+#     + '/tidy_tables/merge_all'
+#     + '/{fn_targets}-tidy_all.csv'
+# )
+# fmt_mergeall_metadata = (
+#     config['snakemake_output_dir'] + '/{search_output_dir}'
+#     + '/tidy_tables/merge_all'
+#     + '/{fn_targets}-metadata.csv'
+# )
+
+# fmt_mergeall_dict_taxtrim_contigs = (
+#     config['snakemake_output_dir'] + '/{search_output_dir}'
+#     + '/tree_trim/merge_all'
+#     + '/{fn_targets}-dict_taxtrim_contigs-taxtrim'
+#         + '_thresh_' + str(config['tree_trim_merge']['thresh']) 
+#         + '_minsamples_' + str(config['tree_trim_merge']['minsamples'])
+#         + '_minbatches_' + str(config['tree_trim_merge']['minbatches'])
+#         + '.csv'
+# )
+# fmt_mergeall_tensor_taxtrim_tidy = (
+#     config['snakemake_output_dir'] + '/{search_output_dir}'
+#     + '/tree_trim/merge_all'
+#     + '/{fn_targets}-barnacle_tensor_tidy-tree_trim'
+#         + '_thresh_' + str(config['tree_trim_merge']['thresh']) 
+#         + '_minsamples_' + str(config['tree_trim_merge']['minsamples'])
+#         + '_minbatches_' + str(config['tree_trim_merge']['minbatches'])
+#         + '.csv'
+# )
+
+# fmt_mergeall_tidy_trim = (
+#     config['snakemake_output_dir'] + '/{search_output_dir}'
+#     + '/tidy_tables'
+#     + '/{fn_targets}-tidy_all_trim.csv'
+# )
+# # Write start files
+# fns_start = get_fns(fmt_start)
+# fn_other_start = config['snakemake_output_dir'] + '/start_files/start.txt'
+# fns_start.append(fn_other_start)
+# for fn in fns_start:
+#     if not os.path.exists(fn):
+#         # Make directories
+#         out_dir = os.path.split(fn)[0]
+#         if not os.path.exists(out_dir):
+#             os.makedirs(out_dir)
+#         # Write files
+#         with open(fn, 'w') as f:
+#             f.write('Started...')
+
+
+# Scripts
+# sc_get_metat_dict = 'sc_get_metat_dict.py'
+sc_get_column_sum = 'sc.get_column_sum.py'
+sc_get_metat_dict = '../repo-armbrust-metat-search/scripts/sc_get_metat_dict.py'
+
+
+# =============================================================================
+# Rule all output
+# =============================================================================
+
+fns_all_taxon_estcounts = get_fns_sample(fmt_all_taxon_estcounts, col_check='fn_diamond')
+fns_tidy_all_taxon_estcounts = get_fns_sample(fmt_tidy_all_taxon_estcounts, col_check='fn_diamond')
+
+# fns_dict_taxon_contigs = get_fns(fmt_dict_taxon_contigs, col_check='fn_diamond')
+# contig_list_done = get_fns(fmt_contig_list, col_check='fn_diamond')
+# fns_dicts_contig_count = get_fns_sample(fmt_dict_contig_count, col_check='fn_diamond')
+# fns_dicts_contig_ko = get_fns_sample(fmt_dict_contig_ko, col_check='fn_diamond')
+# fns_sample_tidytable = get_fns_sample(fmt_sample_tidytable, col_check='sn_type_norm_factor')
+
+# fns_sample_norm_factor = get_fns_sample(fmt_sample_norm_factor, col_check='sn_type_norm_factor')
+# fns_table_contig_norm_count = get_fns_sample(fmt_table_contig_norm_count, col_check='sn_type_norm_factor')
+# fns_table_KO_norm_count = get_fns_sample(fmt_table_KO_norm_count, col_check='sn_type_norm_factor')
+# fns_combine_table_KO_norm_count = get_fns_target(fmt_combine_table_KO_norm_count)
+# fns_sum_counts = get_fns_sample(fmt_sum_counts, col_check='sn_type_norm_factor')
+# fns_dict_contig_tax = get_fns(fmt_dict_contig_tax, col_check='fn_diamond')
+# fns_df_contig_tax_full = get_fns(fmt_df_contig_tax_full, col_check='fn_diamond')
+# fns_sample_metadata = get_fns_sample(fmt_sample_metadata, col_check='sn_type_norm_factor')
+# fns_mergesample_tidytable = get_fns(fmt_mergesample_tidytable, col_check='fn_diamond')
+# fns_mergesample_tidy_trim = get_fns(fmt_mergesample_tidy_trim, col_check='fn_diamond')
+# fns_mergesample_tensor_taxtrim_tidy = get_fns(fmt_mergesample_tensor_taxtrim_tidy, col_check='fn_diamond')
+# fn_mergeall_tidytable = get_fns_target(fmt_mergeall_tidytable)
+# fn_mergeall_tidytable = get_fns_target(fmt_mergeall_tidytable)
+# fn_mergeall_tensor_taxtrim_tidy = get_fns_target(fmt_mergeall_tensor_taxtrim_tidy)
+
+# =============================================================================
+# Snake rules
+# =============================================================================
+
+rule all:
+    input:
+        fns_tidy_all_taxon_estcounts,
+        fn_merge_all_taxa_estcounts,
+
+
+
+rule get_all_taxa_estcounts:
+    input:
+        fn_diamond = lambda w: get_fn_full(
+            w.batch, input_table,
+            col_dir='dir_diamond', col_fn='fn_diamond'
+        ),
+        fn_kallisto_full = lambda w: get_fn_kallisto_full(
+            w.batch, w.fn_kallisto, input_table
+        ),
+    output:
+        fn_all_taxon_estcounts = fmt_all_taxon_estcounts
+    params:
+        d_idx_contig = lambda w: get_input_table_value(
+            w.batch, input_table, 'idx_contig_diamond'
+        ),
+        d_idx_taxid = lambda w: get_input_table_value(
+            w.batch, input_table, 'idx_taxid_diamond'
+        ), 
+        d_type_contig_name = lambda w: get_input_table_value(
+            w.batch, input_table, 'type_diamond_contig_name'
+        ),
+
+        fn_kallisto_tar = lambda w: get_fn_kallisto_tar(
+            w.batch, w.fn_kallisto, input_table
+        ),
+        k_name_contig = lambda w: get_input_table_value(
+            w.batch, input_table, 'name_contig_kallisto'
+        ),
+        k_name_estcounts = lambda w: get_input_table_value(
+            w.batch, input_table, 'name_estcounts_kallisto'
+        ),
+        k_columns_line_number = lambda w: get_input_table_value(
+            w.batch, input_table, 'col_line_kallisto'
+        ),
+        k_idx_contig = lambda w: get_input_table_value(
+            w.batch, input_table, 'idx_contig_kallisto'
+        ),
+        k_idx_estcounts = lambda w: get_input_table_value(
+            w.batch, input_table, 'idx_estcounts_kallisto'
+        ),
+
+    run:
+        # Get tax dict
+        # Set variables
+        fn = input.fn_diamond
+        idx_contig = int(params.d_idx_contig)
+        idx_taxid = int(params.d_idx_taxid)
+        dict_contig_tax = {}
+
+        # Iterate through file
+        f = fnf.open_file(fn=fn)
+        for line in f:
+            l = fnf.split_line(line, fn)
+            if len(l) > max(idx_contig, idx_taxid):
+                # Get values and remove extra quotes
+                contig = l[idx_contig].replace('"','').replace("'", "")
+                if params.d_type_contig_name == '6tr':  # Remove "_{digit}" aa reading frame from the contig name
+                    contig = re.split(r'_\d+$',contig)[0]
+                taxid = l[idx_taxid].replace('"','').replace("'", "")
+                dict_contig_tax[contig] = taxid
+        f.close()
+
+
+        # Get tax - estcounts
+        # Set variables
+        fn = input.fn_kallisto_full
+        fn_tar = params.fn_kallisto_tar
+        cln = params.k_columns_line_number
+        dict_tax_estcounts = defaultdict(float)
+
+        # Get kallisto key, value indices
+        if params.k_name_contig and params.k_name_estcounts:
+            idx_contig, idx_estcounts = fnf.get_key_value_idx(
+                fn, fn_tar,
+                params.k_name_contig.replace('"','').replace("'", ""), 
+                params.k_name_estcounts.replace('"','').replace("'", ""), 
+                cln
+            )
+        else:
+            idx_contig = params.k_idx_contig
+            idx_estcounts = params.k_idx_estcounts
+
+        # Iterate through kallisto file and add estcounts to tax dict
+        f = fnf.open_file(fn=fn, fn_tar=fn_tar)
+        i = 0
+        while i < cln:  # Skip header, note that no header is cln = 0 and header on the first line should be cln = 1
+            next(f)
+            i += 1
+        for line in f:
+            l = fnf.split_line(line, fn, fn_tar)
+            if len(l) > max(idx_contig, idx_estcounts):
+                contig = l[idx_contig].replace('"','').replace("'", "")
+                estcounts = l[idx_estcounts].replace('"','').replace("'", "")
+                estcounts = float(estcounts)
+                if estcounts:
+                    tax = dict_contig_tax.get(contig)
+                    if tax:
+                        dict_tax_estcounts[tax] += estcounts
+                    # else:
+                    #     raise ValueError(
+                    #         f'''
+                    #         For {fn_tar} in {fn}
+                    #         Contig {contig} not present in dict from {input.fn_diamond}
+                    #         Length of dict: {len(dict_contig_tax)}
+                    #         First ten contigs in dict: {list(dict_contig_tax.keys())[:10]}
+                    #         '''
+                    #     )
+
+        # Save the mapping as a csv
+        with open(output.fn_all_taxon_estcounts, 'w') as f:
+            for tax, ec in dict_tax_estcounts.items():
+                f.write(f'{tax},{ec}\n')
+
+
+# TODO: this really should have been done in the previous rule, 
+#       but it takes a while to run, thus this rule after the fact
+rule get_tidy_all_taxa_estcounts: 
+    input:
+        fn_all_taxon_estcounts = fmt_all_taxon_estcounts
+    output:
+        fn_tidy_all_taxon_estcounts = fmt_tidy_all_taxon_estcounts
+    params:
+        fn_kallisto_tar = lambda w: get_fn_kallisto_tar(
+            w.batch, w.fn_kallisto, input_table
+        ),
+    run:
+        # Load taxa estcounts
+        taxa = []
+        ecs = []
+        with open(input.fn_all_taxon_estcounts, 'r') as f:
+            reader = csv.reader(f)
+            for tax, ec in reader:
+                taxa.append(tax)
+                ecs.append(float(ec))
+        
+        # Get total number of estcounts
+        ec_total = sum(ecs)
+
+        # Get the kallisto filename
+        fn_sample_counts = wildcards.fn_kallisto
+        if params.fn_kallisto_tar:
+            fn_sample_counts = params.fn_kallisto_tar 
+
+        # Write to file
+        with open(output.fn_tidy_all_taxon_estcounts, 'w') as f:
+            writer = csv.writer(f)
+            header = [
+                'batch','fn_sample_counts','taxid','estcounts','frac_total_estcounts'
+                ]
+            writer.writerow(header)
+            for tax, ec in zip(taxa, ecs):
+                frac = ec / ec_total
+                row = [wildcards.batch, fn_sample_counts, tax, ec, frac]
+                writer.writerow(row)
+
+rule merge_all_taxa_estcounts:
+    input:
+        fns_tidy_all_taxon_estcounts = fns_tidy_all_taxon_estcounts
+    output:
+        fn_merge_all_taxa_estcounts = fn_merge_all_taxa_estcounts
+    run:
+        # file to write
+        with open(output.fn_merge_all_taxa_estcounts, 'w') as fw:
+            writer = csv.writer(fw)
+            # write header
+            header = [
+                'batch','fn_sample_counts','taxid','estcounts','frac_total_estcounts'
+                ]
+            writer.writerow(header)
+            # iterate through tidy tables
+            for fn in input.fns_tidy_all_taxon_estcounts:
+                # File to read 
+                with open(fn, 'r') as fr:
+                    reader = csv.reader(fr)
+                    _ = next(reader)  # skip header
+                    for row in reader:
+                        writer.writerow(row)
+
+
+
+# rule get_dict_taxon_contigs:
+#     input:
+#         fn_list_taxids = lambda w: get_fn_full(
+#             w.fn_metat, w.fn_targets, input_table,
+#             col_dir='path_targets', col_fn='fn_targets'
+#         ),
+#     output:
+#         fn_dict_taxon_contigs = fmt_dict_taxon_contigs
+#     params:
+#         script = sc_get_metat_dict,
+#         fn_diamond = lambda w: get_fn_full(
+#             w.fn_metat, w.fn_targets, input_table,
+#             col_dir='dir_diamond', col_fn='fn_diamond'
+#         ),
+#         idx_key = lambda w: get_input_table_value(
+#             w.fn_metat, w.fn_targets, input_table, 'idx_key_diamond'
+#         ),
+#         idx_value = lambda w: get_input_table_value(
+#             w.fn_metat, w.fn_targets, input_table, 'idx_value_diamond'
+#         ),
+#     shell:
+#         """
+#         {params.script} \
+#             -m {params.fn_diamond} \
+#             -t {input.fn_list_taxids} \
+#             -ik {params.idx_key} \
+#             -ivl {params.idx_value} \
+#             -o {output.fn_dict_taxon_contigs} \
+#             --verbose
+#         """
+
+
+# rule get_list_contigs:
+#     input:
+#         fn_dict_taxon_contigs = fmt_dict_taxon_contigs
+#     output:
+#         fn_contig_list = fmt_contig_list,
+#     run:
+#         # Load dict
+#         with open(input.fn_dict_taxon_contigs, 'r') as f:
+#             dict_lists = json.load(f)
+        
+#         # Merge and save
+#         with open(output.fn_contig_list, 'w') as fo:
+#             for _, names in dict_lists.items():
+#                 for n_ in names:
+#                     n = re.split(r'_\d+$',n_)[0]  # Remove "_{digit}" aa reading frame from the contig name
+#                     fo.write(f'{n}\n')
+
+
+# rule get_dict_contig_count:
+#     input:
+#         fn_contig_list = fmt_contig_list
+#     output:
+#         fn_dict_contig_count = fmt_dict_contig_count
+#     params:
+#         script = sc_get_metat_dict,
+#         fn_kallisto_full = lambda w: get_fn_kallisto_full(
+#             w.fn_metat, w.fn_targets, w.fn_kallisto, input_table
+#         ),
+#         fn_kallisto_tar = lambda w: get_fn_kallisto_tar(
+#             w.fn_metat, w.fn_targets, w.fn_kallisto, input_table
+#         ),
+#         name_key = lambda w: get_input_table_value(
+#             w.fn_metat, w.fn_targets, input_table, 'name_key_kallisto'
+#         ),
+#         name_value = lambda w: get_input_table_value(
+#             w.fn_metat, w.fn_targets, input_table, 'name_value_kallisto'
+#         ),
+#         columns_line_number = lambda w: get_input_table_value(
+#             w.fn_metat, w.fn_targets, input_table, 'col_line_kallisto'
+#         ),
+#         idx_key = lambda w: get_input_table_value(
+#             w.fn_metat, w.fn_targets, input_table, 'idx_key_kallisto'
+#         ),
+#         idx_value = lambda w: get_input_table_value(
+#             w.fn_metat, w.fn_targets, input_table, 'idx_value_kallisto'
+#         ),
+#     shell:
+#         """
+#         {params.script} \
+#             -m {params.fn_kallisto_full} \
+#             -mt {params.fn_kallisto_tar} \
+#             -t {input.fn_contig_list} \
+#             -k {params.name_key} \
+#             -vl {params.name_value}  \
+#             -c {params.columns_line_number} \
+#             -ik {params.idx_key} \
+#             -ivl {params.idx_value} \
+#             -o {output.fn_dict_contig_count} \
+#             --verbose
+#         """
+
+# rule get_dict_contig_kos:
+#     input:
+#         fn_contig_list = fmt_contig_list
+#     output:
+#         fn_dict_contig_ko = fmt_dict_contig_ko
+#     params:
+#         script = sc_get_metat_dict,
+#         fn_metat_full = lambda w: get_fn_full(
+#             w.fn_metat, w.fn_targets, input_table,
+#             col_dir='path_metat', col_fn='fn_metat'
+#         ),
+#         fn_targets_full = lambda w: get_fn_full(
+#             w.fn_metat, w.fn_targets, input_table,
+#             col_dir='path_targets', col_fn='fn_targets'
+#         ),
+#         name_key = lambda w: get_input_table_value(
+#             w.fn_metat, w.fn_targets, input_table, 'name_key'
+#         ),
+#         name_value = lambda w: get_input_table_value(
+#             w.fn_metat, w.fn_targets, input_table, 'name_value'
+#         ),
+#         columns_line_number = lambda w: get_input_table_value(
+#             w.fn_metat, w.fn_targets, input_table, 'columns_line_number'
+#         ),
+#         idx_key = lambda w: get_input_table_value(
+#             w.fn_metat, w.fn_targets, input_table, 'idx_key'
+#         ),
+#         idx_value = lambda w: get_input_table_value(
+#             w.fn_metat, w.fn_targets, input_table, 'idx_value'
+#         ),
+#         keysplit = 'remove_6tr'
+#     shell:
+#         """
+#         {params.script} \
+#             -m {params.fn_metat_full} \
+#             -t {input.fn_contig_list} \
+#             -k {params.name_key} \
+#             -vl {params.name_value}  \
+#             -c {params.columns_line_number} \
+#             -ik {params.idx_key} \
+#             -ivl {params.idx_value} \
+#             -ks {params.keysplit} \
+#             -o {output.fn_dict_contig_ko} \
+#             --verbose
+#         """
+    
+# rule get_sample_tidytable:
+#     input:
+#         fn_dict_taxon_contigs = fmt_dict_taxon_contigs,
+#         fn_dict_contig_ko = fmt_dict_contig_ko,
+#         fn_dict_contig_count = fmt_dict_contig_count
+#     output:
+#         fn_sample_tidytable = fmt_sample_tidytable,
+#         # fn_sample_metadata = fmt_sample_metadata
+#     params:
+#         fn_kallisto_tar = lambda w: get_fn_kallisto_tar(
+#             w.fn_metat, w.fn_targets, w.fn_kallisto, input_table
+#         ),
+#         sn_type_parse_kallisto = lambda w: get_input_table_value(
+#             w.fn_metat, w.fn_targets, input_table, 
+#             'sn_type_parse_kallisto'
+#         ),
+#         type_contig_tax = lambda w: get_input_table_value(
+#                 w.fn_metat, w.fn_targets, input_table, 'type_diamond_contig_name'
+#             )
+#     run:
+#         # Load kos
+#         with open(input.fn_dict_taxon_contigs, 'r') as f:
+#             dict_taxon_contigs = json.load(f)
+#         # Invert dict
+#         dict_contig_tax = {}
+#         for taxon, contigs in dict_taxon_contigs.items():
+#             for c in contigs:
+#                 dict_contig_tax[c] = taxon
+#         # Load taxa
+#         with open(input.fn_dict_contig_ko, 'r') as f:
+#             dict_contig_ko = json.load(f)
+#         # Load counts
+#         with open(input.fn_dict_contig_count, 'r') as f:
+#             dict_contig_count = json.load(f)
+#         # Get the kallisto filename
+#         fn_sample_counts = wildcards.fn_kallisto
+#         if params.fn_kallisto_tar:
+#             fn_sample_counts = params.fn_kallisto_tar 
+#         # Get columns list
+#         columns = ['contig','fn_sample_counts', 'KO','taxon','estcounts']
+#         # rep = dict(zip(sample_info_columns, sample_info))['rep']
+#         # Write lines
+#         with open(output.fn_sample_tidytable, 'w') as fo:
+#             writer = csv.writer(fo)
+#             writer.writerow(columns)
+#             countsum = 0
+#             n_ko = 0
+#             for c, tax in dict_contig_tax.items():
+#                 c = re.sub(r'_\d+$','',c)      
+#                 # c = c if params.type_contig_tax else c_
+#                 ko = dict_contig_ko.get(c)
+#                 ko = ko[0] if ko else 0
+#                 if ko:
+#                     n_ko += 1
+#                 # tax = dict_contig_tax[c].get(c)
+#                 # tax = tax[0] if tax else 0
+#                 count = dict_contig_count.get(c)
+#                 count = count[0] if count else 0
+#                 countsum += float(count)
+#                 row = [c, fn_sample_counts, ko, tax, count]
+#                 writer.writerow(row)
+#         if countsum == 0:
+#             raise ValueError(
+#                     f"""
+#                     Counts were not read from {input.fn_dict_contig_count}, or there are no counts.
+#                     """
+#                 ) 
+#         if n_ko == 0:
+#             raise ValueError(
+#                     f"""
+#                     Kos were not read from {input.fn_dict_contig_ko}, or there are no ko annotations.
+#                     """
+#                 ) 
+
+# rule merge_all_tidy_tables:
+#     input:
+#         fns_sample_tidytable = fns_sample_tidytable,
+#         # fns_sample_metadata = fns_sample_metadata,
+#     output:
+#         fn_mergeall_tidytable = fmt_mergeall_tidytable,
+#         # fn_mergeall_metadata = fmt_mergeall_metadata,
+#     run:
+#         # Write table
+#         with open(output.fn_mergeall_tidytable, 'w') as fw:
+#             i = 0
+#             for fn in input.fns_sample_tidytable:
+#                 with open(fn, 'r') as fr:
+#                     columns = fr.readline()
+#                     if i == 0:
+#                         fw.write(columns)
+#                     for row in fr:
+#                         fw.write(row)
+#                 i += 1   
+
+# rule trim_merge_all_taxon_tree_build_tidy_tensor:
+#     input:
+#         fn_mergeall_tidytable = fmt_mergeall_tidytable,
+#         fn_mergeall_metadata = config['fn_metadata'],
+#     output:
+#         fn_mergeall_dict_taxtrim_contigs = fmt_mergeall_dict_taxtrim_contigs,
+#         fn_mergeall_tensor_taxtrim_tidy = fmt_mergeall_tensor_taxtrim_tidy,
+#     params:
+#         filtfunc = config['tree_trim_merge']['filtfunc'],
+#         thresh = config['tree_trim_merge']['thresh'],
+#         minsamples = config['tree_trim_merge']['minsamples'],
+#         minbatches = config['tree_trim_merge']['minbatches'],
+#     run:
+#         # Get sample batch dict
+#         metadata = pd.read_csv(input.fn_mergeall_metadata)
+#         dict_sample_batch = dict(zip(
+#             metadata['fn_sample_counts'],
+#             metadata['assembly']
+#         ))
+
+#         # Build tree
+#         t = TreeTrim(
+#             input.fn_mergeall_tidytable,
+#             col_contig='contig', 
+#             col_ko='KO',
+#             col_taxon='taxon',
+#             col_estcounts='estcounts',
+#             col_sample='fn_sample_counts'
+#         )
+#         # Trim tree
+#         t.trim_tree(
+#             filt_func_name=params.filtfunc,
+#             thresh=int(params.thresh),
+#             dict_sample_batch=dict_sample_batch,
+#             minsamples=int(params.minsamples),
+#             minbatches=int(params.minbatches),
+#         )
+#         # save dict taxtrim contig
+#         with open(output.fn_mergeall_dict_taxtrim_contigs, 'w') as f:
+#             json.dump(
+#                 t.dict_taxtrim_contigs, 
+#                 f, 
+#                 sort_keys=True, 
+#                 indent=4, 
+#                 separators=(',', ': ')
+#             )
+#         # Get dict sample rep
+#         dict_sam_namenorep = dict(zip(metadata['fn_sample_counts'], metadata['assm_sample']))
+#         dict_sam_rep = dict(zip(metadata['fn_sample_counts'], metadata['rep']))
+#         # Build tensor sample x gene x taxon as tidytable
+#         columns = ['assm_sample','KO','taxon_trim','estcounts','rep']
+#         with open(output.fn_mergeall_tensor_taxtrim_tidy, 'w') as f:
+#             writer = csv.writer(f)
+#             writer.writerow(columns)
+#             for taxtrim, d1 in t.dict_taxtrim_ko_sam_estcounts.items():
+#                 for ko, d2 in d1.items():
+#                     for sam, ec in d2.items():
+#                         rep = dict_sam_rep[sam]
+#                         namenorep = dict_sam_namenorep[sam]
+#                         row = [namenorep, ko, taxtrim, ec, rep]
+#                         writer.writerow(row)
+
+
+
+# rule get_sample_metadata:
+#     input:
+#         fn_dict_KO_contigs = fmt_dict,
+#         fn_dict_contig_tax = fmt_dict_contig_tax,
+#         fn_dict_contig_count = fmt_dict_contig_count
+#     output:
+#         fn_sample_metadata = fmt_sample_metadata
+#     params:
+#         fn_kallisto_tar = lambda w: get_fn_kallisto_tar(
+#             w.fn_metat, w.fn_targets, w.fn_kallisto, input_table
+#         ),
+#         sn_type_parse_kallisto = lambda w: get_input_table_value(
+#             w.fn_metat, w.fn_targets, input_table, 
+#             'sn_type_parse_kallisto'
+#         ),
+#         type_contig_tax = lambda w: get_input_table_value(
+#                 w.fn_metat, w.fn_targets, input_table, 'type_diamond_contig_name'
+#             )
+#     run:
+#         # Get the kallisto filename
+#         fn_sample_counts = wildcards.fn_kallisto
+#         if params.fn_kallisto_tar:
+#             fn_sample_counts = params.fn_kallisto_tar 
+#         # Get sample metdata columns
+#         sample_info_columns = parse_fn_kallisto_sn('', get_columns=True)
+#         # Get sample metadata
+#         sample_info = parse_fn_kallisto_sn(
+#             fn_sample_counts, 
+#             params.sn_type_parse_kallisto
+#         )
+#         # Get sample name without replicate
+#         namenorep = ''
+#         for col, info in zip(sample_info_columns, sample_info):
+#             if col != 'rep':
+#                 if info:
+#                     namenorep += f"{info}-"
+#         assm_sample = namenorep[:-1]
+#         # Add info to rows
+#         sample_info_columns += ['fn_sample_counts', 'assm_sample']
+#         sample_info += [fn_sample_counts, assm_sample]
+#         # Write to metadata file
+#         with open(output.fn_sample_metadata, 'w') as f:
+#             writer = csv.writer(f)
+#             writer.writerow(sample_info_columns)
+#             writer.writerow(sample_info)
+
+# # rule get_dict_taxon_contigs:
+# #     input:
+# #         fn_start = fmt_start
+# #     output:
+# #         fn_dict_taxon_contigs = fmt_dict_taxon_contigs
+# #     params:
+# #         script = sc_get_metat_dict,
+# #         fn_metat_full = lambda w: get_fn_full(
+# #             w.fn_metat, w.fn_targets, input_table,
+# #             col_dir='path_metat', col_fn='fn_metat'
+# #         ),
+# #         fn_targets_full = lambda w: get_fn_full(
+# #             w.fn_metat, w.fn_targets, input_table,
+# #             col_dir='path_targets', col_fn='fn_targets'
+# #         ),
+# #         name_key = lambda w: get_input_table_value(
+# #             w.fn_metat, w.fn_targets, input_table, 'name_key'
+# #         ),
+# #         name_value = lambda w: get_input_table_value(
+# #             w.fn_metat, w.fn_targets, input_table, 'name_value'
+# #         ),
+# #         columns_line_number = lambda w: get_input_table_value(
+# #             w.fn_metat, w.fn_targets, input_table, 'columns_line_number'
+# #         ),
+# #         idx_key = lambda w: get_input_table_value(
+# #             w.fn_metat, w.fn_targets, input_table, 'idx_key'
+# #         ),
+# #         idx_value = lambda w: get_input_table_value(
+# #             w.fn_metat, w.fn_targets, input_table, 'idx_value'
+# #         ),
+# #     shell:
+# #         """
+# #         {params.script} \
+# #             -m {params.fn_metat_full} \
+# #             -t {params.fn_targets_full} \
+# #             -k {params.name_key} \
+# #             -vl {params.name_value}  \
+# #             -c {params.columns_line_number} \
+# #             -ik {params.idx_key} \
+# #             -ivl {params.idx_value} \
+# #             -o {output.fn_dict} \
+# #             --verbose
+# #         """
+    
+
+# rule get_list_contigs:
+#     input:
+#         fn_dict = fmt_dict
+#     output:
+#         fn_contig_list = fmt_contig_list
+#     run:
+#         # Load dict
+#         with open(input.fn_dict, 'r') as f:
+#             dict_lists = json.load(f)
+        
+#         # Merge and save
+#         with open(output.fn_contig_list, 'w') as fo:
+#             for _, names in dict_lists.items():
+#                 for n_ in names:
+#                     n = re.split(r'_\d+$',n_)[0]  # Remove "_{digit}" aa reading frame from the contig name
+#                     fo.write(f'{n}\n')
+
+
+
+
+
+# # rule get_norm_factor:
+# #     input:
+# #         fn_dict_contig_count = fmt_dict_contig_count
+# #     output:
+# #         fn_sample_norm_factor = fmt_sample_norm_factor
+# #     params:
+# #         fn_norm_factor = lambda w: get_input_table_value(
+# #             w.fn_metat, w.fn_targets, input_table, 'fn_norm_factor'
+# #         ),
+# #         fn_kallisto_tar = lambda w: get_fn_kallisto_tar(
+# #             w.fn_metat, w.fn_targets, w.fn_kallisto, input_table
+# #         ),
+# #         sn_type = lambda w: get_input_table_value(
+# #             w.fn_metat, w.fn_targets, input_table, 'sn_type_norm_factor'
+# #         ),
+# #         col_name = lambda w: get_input_table_value(
+# #             w.fn_metat, w.fn_targets, input_table, 'col_name_norm_factor'
+# #         ),
+# #     run:
+# #         # Get kallisto counts file name
+# #         fn_sample_counts = wildcards.fn_kallisto
+# #         if params.fn_kallisto_tar:
+# #             fn_sample_counts = params.fn_kallisto_tar  
+
+# #         # Get sample name used in the norm factor table
+# #         if params.sn_type == 'G1':
+# #             sn = re.search(r'(?<=\.)S.+?um.*[A-Z]{1,2}(?=\.)', fn_sample_counts)[0]
+# #             sn = re.sub('\.','',sn)
+# #         elif params.sn_type == 'G2':
+# #             # Get regex matches
+# #             sns = re.findall(r'(?=(G.+?um.*[A-Z]{1,2}(?=\.)))', fn_sample_counts)
+# #             # Pick the shortest match
+# #             sns_len = [len(sn) for sn in sns]
+# #             sns_len_min = min(sns_len)
+# #             for i, l in enumerate(sns_len):
+# #                 if l == sns_len_min:
+# #                     idx = i
+# #             sn = sns[i]
+# #         elif params.sn_type == 'D1':
+# #             sn = re.search(r'S.+?(?=\.)', fn_sample_counts)[0]
+# #         elif params.sn_type == 'G3PA':
+# #             sn = re.search(r'G.+(?=\.unstranded)', fn_sample_counts)[0]
+# #             sn += '.flash'
+# #         elif params.sn_type == 'G3NS':
+# #             sn = os.path.splitext(fn_sample_counts)[0]
+# #         else:
+# #             raise ValueError(
+# #                 f"""
+# #                 Sample name type not provided (sn_type column in file table)
+# #                 """
+# #             )
+# #         # elif params.sn_type == 'G2PA_DCM_RR':
+# #         #     sn = re.search(r'^\w+(?=\.)', fn_sample_counts) + '.sam' 
+
+        
+# #         if sn:
+# #             # Get the norm factor from the table
+# #             df_norm = pd.read_csv(params.fn_norm_factor)
+# #             try:
+# #                 norm_factor = df_norm.loc[
+# #                     df_norm[params.col_name] == sn,
+# #                     'NORM_FACTOR'
+# #                 ].values[0]
+# #             except:
+# #                 raise ValueError(
+# #                     f"""
+# #                     The sample name matching failed. The filename to parse was: 
+# #                     {fn_sample_counts}
+# #                     The parsed sample name was:
+# #                     {sn}
+# #                     The dataframe of normalization factors was:
+# #                     {df_norm}
+# #                     The column to search for sample name was:
+# #                     {params.col_name}
+# #                     """
+# #                 ) 
+# #         else:
+# #             norm_factor = ''
+
+# #         # Write norm factor to file
+# #         with open(output.fn_sample_norm_factor, 'w') as f:
+# #             f.write(str(norm_factor))
+
+
+# # rule get_sum_counts:
+# #     input:
+# #         fn_start = fn_other_start
+# #     output:
+# #         fn_sum_counts = fmt_sum_counts
+# #     params:
+# #         script = sc_get_column_sum,
+# #         fn_kallisto_full = lambda w: get_fn_kallisto_full(
+# #             w.fn_metat, w.fn_targets, w.fn_kallisto, input_table
+# #         ),
+# #         fn_kallisto_tar = lambda w: get_fn_kallisto_tar(
+# #             w.fn_metat, w.fn_targets, w.fn_kallisto, input_table
+# #         ),
+# #         name_value = lambda w: get_input_table_value(
+# #             w.fn_metat, w.fn_targets, input_table, 'name_value_kallisto'
+# #         ),
+# #         columns_line_number = lambda w: get_input_table_value(
+# #             w.fn_metat, w.fn_targets, input_table, 'col_line_kallisto'
+# #         ),
+# #         idx_value = lambda w: get_input_table_value(
+# #             w.fn_metat, w.fn_targets, input_table, 'idx_value_kallisto'
+# #         ),
+# #     shell:
+# #         """
+# #         {params.script} \
+# #             -m {params.fn_kallisto_full} \
+# #             -mt {params.fn_kallisto_tar} \
+# #             -vl {params.name_value}  \
+# #             -c {params.columns_line_number} \
+# #             -ivl {params.idx_value} \
+# #             -o {output.fn_sum_counts} \
+# #             --verbose
+# #         """        
+
+
+# # rule get_table_contig_norm_count:
+# #     input:
+# #         fn_sample_norm_factor = fmt_sample_norm_factor,
+# #         fn_dict_contig_count = fmt_dict_contig_count,
+# #         fn_contig_list = fmt_contig_list,
+# #     output:
+# #         fn_table_norm_count = fmt_table_contig_norm_count
+# #     run:
+# #         # Load norm factor
+# #         with open(input.fn_sample_norm_factor, 'r') as f:
+# #             norm_factor = f.read()
+# #         norm_factor = float(norm_factor)
+# #         # Load dict
+# #         with open(input.fn_dict_contig_count, 'r') as f:
+# #             dict_contig_count = json.load(f)
+# #         # Load list
+# #         with open(input.fn_contig_list, 'r') as f:
+# #             list_contigs = f.read().splitlines()
+
+# #         # Write contigs with no kallisto alignment to separate file       
+# #         bn, _ = os.path.splitext(output.fn_table_norm_count)
+# #         fn_failed = bn + '-no_kallisto_align.txt'
+# #         with open(output.fn_table_norm_count, 'w') as f, open(fn_failed, 'w') as ff:
+# #             writer = csv.writer(f)
+# #             # Write column names
+# #             columns = ['contig', wildcards.fn_kallisto]
+# #             writer.writerow(columns)
+# #             # Write 
+# #             for contig in list_contigs:
+# #                 # Normalize
+# #                 count = dict_contig_count.get(contig)
+# #                 if count:
+# #                     count = float(count[0])
+# #                     count *= norm_factor
+# #                 else:
+# #                     # If not in the dictionary, note it in the failed file
+# #                     count = 0
+# #                     ff.write(f'{contig}\n')
+# #                 row = [contig, count]
+# #                 writer.writerow(row)
+
+# # rule get_table_KO_norm_count:
+# #     input:
+# #         fn_dict_KO_contigs = fmt_dict,
+# #         fn_dict_contig_count = fmt_dict_contig_count,
+# #         fn_sample_norm_factor = fmt_sample_norm_factor,
+# #         fn_sum_counts = fmt_sum_counts
+# #     output:
+# #         fn_table_KO_norm_count = fmt_table_KO_norm_count,
+# #     params:
+# #         fn_list_KOs = lambda w: get_fn_full(
+# #             w.fn_metat, w.fn_targets, input_table,
+# #             col_dir='path_targets', col_fn='fn_targets'
+# #         ),
+# #         fn_kallisto_tar = lambda w: get_fn_kallisto_tar(
+# #             w.fn_metat, w.fn_targets, w.fn_kallisto, input_table
+# #         ),
+# #         sn_type_parse_kallisto = lambda w: get_input_table_value(
+# #             w.fn_metat, w.fn_targets, input_table, 
+# #             'sn_type_parse_kallisto'
+# #         ),
+# #     run:
+# #         # Load dict ko -> contigs
+# #         with open(input.fn_dict_KO_contigs, 'r') as f:
+# #             dict_KO_contigs = json.load(f)
+# #         # Load dict contig -> count
+# #         with open(input.fn_dict_contig_count, 'r') as f:
+# #             dict_contig_count = json.load(f)
+# #         # Load norm factor
+# #         with open(input.fn_sample_norm_factor, 'r') as f:
+# #             norm_factor = f.read()
+# #         norm_factor = float(norm_factor)
+# #         # Load sum counts
+# #         with open(input.fn_sum_counts, 'r') as f:
+# #             sum_counts = f.read()
+# #         sum_counts = float(sum_counts)
+# #         # Convert to dict ko -> norm_counts, summing across all contigs in the KO
+# #         dict_KO_norm_count = defaultdict(lambda: 0)
+# #         for KO, contigs in dict_KO_contigs.items():
+# #             for c_ in contigs:
+# #                 c = re.split(r'_\d+$',c_)[0]  # Remove "_{digit}" aa reading frame from the contig name
+# #                 count = dict_contig_count.get(c)
+# #                 if count:
+# #                     count = float(count[0])
+# #                     count *= norm_factor
+# #                 else:
+# #                     # If not in the dictionary
+# #                     count = 0
+# #                 dict_KO_norm_count[KO] += count
+# #         # Load KO list
+# #         with open(params.fn_list_KOs) as f:
+# #             list_KOs = f.read().splitlines()
+# #         # Get the kallisto filename
+# #         fn_sample_counts = wildcards.fn_kallisto
+# #         if params.fn_kallisto_tar:
+# #             fn_sample_counts = params.fn_kallisto_tar  
+# #         # Start the row
+# #         columns = ['fn_KO', 'fn_sample_counts']
+# #         row = [wildcards.fn_metat, fn_sample_counts]
+# #         # Parse the sample name info
+# #         columns += parse_fn_kallisto_sn(
+# #             fn_sample_counts,
+# #             get_columns=True
+# #         )
+# #         row += parse_fn_kallisto_sn(
+# #             fn_sample_counts, 
+# #             params.sn_type_parse_kallisto
+# #         )
+# #         # Add sum counts for the sample
+# #         columns += ['sample_sum_counts']
+# #         row += [sum_counts * norm_factor]
+# #         # Build row in order by ko list 
+# #         columns += list_KOs
+# #         row += [dict_KO_norm_count[KO] for KO in list_KOs]
+# #         # Write to file
+# #         with open(output.fn_table_KO_norm_count, 'w') as f:
+# #             writer = csv.writer(f)
+# #             writer.writerow(columns)
+# #             writer.writerow(row)
+
+
+# # rule combine_table_KO_norm_count:
+# #     input:
+# #         fns_table_KO_norm_count = fns_table_KO_norm_count,
+# #     output:
+# #         fn_combine_table_KO_norm_count = fmt_combine_table_KO_norm_count
+# #     run:
+# #         with open(output.fn_combine_table_KO_norm_count, 'w') as fw:
+# #             i = 0
+# #             for fn in input.fns_table_KO_norm_count:
+# #                 with open(fn, 'r') as fr:
+# #                     columns = fr.readline()
+# #                     if i == 0:
+# #                         fw.write(columns)
+# #                     row = fr.readline()
+# #                     fw.write(row)
+# #                 i += 1
+
+
+
+
+
+# # rule get_table_full_lineage:
+# #     input:
+# #         fn_dict_contig_tax = fmt_dict_contig_tax,
+# #         fn_contig_list_6tr = fmt_contig_list_6tr,
+# #         fn_contig_list = fmt_contig_list,
+# #     output:
+# #         fn_df_contig_tax_full = fmt_df_contig_tax_full
+# #     params:
+# #         fn_list_contigs = lambda w, input: get_fn_list_contigs_diamond(
+# #             w.fn_metat, w.fn_targets, input_table,
+# #             fn_6tr=input.fn_contig_list_6tr, 
+# #             fn_std=input.fn_contig_list
+# #         )
+# #     run:
+# #         # Load list
+# #         with open(params.fn_list_contigs, 'r') as f:
+# #             list_contigs = f.read().splitlines()
+            
+# #         # Load dict
+# #         with open(input.fn_dict_contig_tax, 'r') as f:
+# #             dict_contig_taxid = json.load(f)
+
+# #         # Get database        
+# #         ncbi = NCBITaxa()
+# #         # TODO build in a function to check if database needs to be updated
+
+# #         bn, _ = os.path.splitext(output.fn_df_contig_tax_full)
+# #         fn_failed = bn + '-failed_to_fetch.txt'
+# #         with open(output.fn_df_contig_tax_full, 'w') as f, open(fn_failed, 'w') as ff:
+# #             writer = csv.writer(f)
+# #             # Write columns
+# #             columns = ['contig']
+# #             for rank in config['desired_ranks']:
+# #                 columns.append(rank + '_name')
+# #                 columns.append(rank + '_taxid')
+# #             writer.writerow(columns)
+# #             # Write a row of ranks for each contig
+# #             dict_rank_taxid = {}
+# #             for contig in list_contigs:
+# #                 # Get lineage for contig
+# #                 taxid = dict_contig_taxid.get(contig)
+# #                 if taxid:
+# #                     taxid = taxid[0]
+# #                     if not int(taxid) == 0:
+# #                         try:
+# #                             lineage = ncbi.get_lineage(taxid)
+# #                             # Get ranks for lineage
+# #                             dict_taxid_rank = ncbi.get_rank(lineage)
+# #                             dict_rank_taxid = {v:k for k, v in dict_taxid_rank.items()}
+# #                             # Get names for lineage
+# #                             names = ncbi.translate_to_names(lineage)
+# #                             dict_taxid_name = dict(zip(lineage, names))
+# #                         except:
+# #                             ff.write(f'{taxid}\n')
+# #                             pass
+# #                 # Get a list of names and taxids for the lineage ordered by rank
+# #                 tax_full = [contig]
+# #                 for rank in config['desired_ranks']:
+# #                     taxid = dict_rank_taxid.get(rank)
+# #                     if taxid:
+# #                         name = dict_taxid_name[taxid]
+# #                     else:
+# #                         name = None
+# #                     tax_full.append(name)
+# #                     tax_full.append(taxid)
+# #                 # Write to file
+# #                 writer.writerow(tax_full)
+            
+
+
+
+
+
+# # rule merge_sample_tidy_tables:
+# #     input:
+# #         fns_sample_tidytable = lambda w: get_fns_row_sample(
+# #             fmt_sample_tidytable,
+# #             w.fn_metat, w.fn_targets, input_table
+# #         ),
+# #         # fn_sample_metadata = lambda w: get_fns_row_sample(
+# #         #     fmt_sample_metadata,
+# #         #     w.fn_metat, w.fn_targets, input_table
+# #         # ),
+# #     output:
+# #         fn_mergesample_tidytable = fmt_mergesample_tidytable,
+# #         fn_mergesample_metadata = fmt_mergesample_metadata
+# #     run:
+# #         # Write table
+# #         with open(output.fn_mergesample_tidytable, 'w') as fw:
+# #             i = 0
+# #             for fn in input.fns_sample_tidytable:
+# #                 with open(fn, 'r') as fr:
+# #                     columns = fr.readline()
+# #                     if i == 0:
+# #                         fw.write(columns)
+# #                     for row in fr:
+# #                         fw.write(row)
+# #                 i += 1   
+# #         # # Write metadata     
+# #         # with open(output.fn_mergesample_metadata, 'w') as fw:
+# #         #     i = 0
+# #         #     for fn in input.fn_sample_metadata:
+# #         #         with open(fn, 'r') as fr:
+# #         #             columns = fr.readline()
+# #         #             row = fr.readline()
+# #         #             if i == 0:
+# #         #                 fw.write(columns)
+# #         #             fw.write(row)
+# #         #         i += 1
+
+# # rule merge_all_metadata:
+# #     input:
+# #         fns_sample_metadata = fns_sample_metadata,
+# #     output:
+# #         fn_mergeall_metadata = fmt_mergeall_metadata,
+# #     run:
+# #         # Write metadata     
+# #         with open(output.fn_mergeall_metadata, 'w') as fw:
+# #             i = 0
+# #             for fn in input.fns_sample_metadata:
+# #                 with open(fn, 'r') as fr:
+# #                     columns = fr.readline()
+# #                     row = fr.readline()
+# #                     if i == 0:
+# #                         fw.write(columns)
+# #                     fw.write(row)
+# #                 i += 1 
+
+
+
+# # rule trim_sample_taxon_trees_build_tidy_tensor:
+# #     input:
+# #         fn_mergesample_tidytable = fmt_mergesample_tidytable,
+# #         fn_mergeall_metadata = fmt_mergeall_metadata,
+# #         # fn_mergesample_metadata = fmt_mergesample_metadata
+# #     output:
+# #         fn_mergesample_dict_taxtrim_contigs = fmt_mergesample_dict_taxtrim_contigs,
+# #         fn_mergesample_tensor_taxtrim_tidy = fmt_mergesample_tensor_taxtrim_tidy
+# #         # fn_mergesample_tidy_trim = fmt_mergesample_tidy_trim
+# #     params:
+# #         filtfunc = config['tree_trim']['filtfunc'],
+# #         thresh = config['tree_trim']['thresh'],
+# #         minsamples = config['tree_trim']['minsamples'],
+# #     run:
+# #         # Build tree
+# #         t = TreeTrim(
+# #             input.fn_mergesample_tidytable,
+# #             col_contig='contig', 
+# #             col_ko='KO',
+# #             col_taxon='taxon',
+# #             col_estcounts='estcounts',
+# #             col_sample='fn_sample_counts'
+# #         )
+# #         # Trim tree
+# #         t.trim_tree(
+# #             filt_func_name=params.filtfunc,
+# #             thresh=int(params.thresh), 
+# #             minsamples=int(params.minsamples)
+# #         )
+# #         # save dict taxtrim contig
+# #         with open(output.fn_mergesample_dict_taxtrim_contigs, 'w') as f:
+# #             json.dump(
+# #                 t.dict_taxtrim_contigs, 
+# #                 f, 
+# #                 sort_keys=True, 
+# #                 indent=4, 
+# #                 separators=(',', ': ')
+# #             )
+# #         # Get dict sample rep
+# #         metadata = pd.read_csv(input.fn_mergeall_metadata)
+# #         dict_sam_namenorep = dict(zip(metadata['fn_sample_counts'], metadata['assm_sample']))
+# #         dict_sam_rep = dict(zip(metadata['fn_sample_counts'], metadata['rep']))
+# #         # cols_namenorep = metadata.columns[
+# #         #     (metadata.columns != 'fn_sample_counts')
+# #         #     & (metadata.columns != 'rep')
+# #         # ]
+# #         # dict_sam_rep = {}
+# #         # dict_sam_namenorep = {}
+# #         # for _, row in metadata.iterrows():
+# #         #     dict_sam_rep[row['fn_sample_counts']] = row['rep']
+# #         #     namenorep = ''
+# #         #     for c in cols_namenorep:
+# #         #         namenorep += f"{str(row[c])}-"
+# #         #     dict_sam_namenorep[row['fn_sample_counts']] = namenorep[:-1]
+# #         # dict_sam_rep = dict(zip(
+# #         #     metadata['assm_sample'], metadata['rep']
+# #         # ))
+# #         # Build tensor sample x gene x taxon as tidytable
+# #         # dict_taxtrim_ko_sample = defaultdict(lambda: defaultdict(dict))
+# #         columns = ['assm_sample','KO','taxon_trim','estcounts','rep']
+# #         with open(output.fn_mergesample_tensor_taxtrim_tidy, 'w') as f:
+# #             writer = csv.writer(f)
+# #             writer.writerow(columns)
+# #             for taxtrim, d1 in t.dict_taxtrim_ko_sam_estcounts.items():
+# #                 for ko, d2 in d1.items():
+# #                     for sam, ec in d2.items():
+# #                         rep = dict_sam_rep[sam]
+# #                         namenorep = dict_sam_namenorep[sam]
+# #                         row = [namenorep, ko, taxtrim, ec, rep]
+# #                         writer.writerow(row)
+
+# #         # # Add trimmed taxa column to tidy table
+# #         # with open(input.fn_mergesample_tidytable, 'r') as fr:
+# #         #     with open(output.fn_mergesample_tidy_trim, 'w') as fw:
+# #         #         reader = csv.DictReader(fr)
+# #         #         columns = reader.fieldnames + ['taxon_trim']
+# #         #         writer = csv.DictWriter(fw, delimiter=',', fieldnames=columns)
+# #         #         # Write columns line
+# #         #         writer.writeheader()
+# #         #         # write rest of lines
+# #         #         for row in reader:
+# #         #             contig = row['contig']
+# #         #             taxtrim = t.dict_contig_taxtrim.get(contig)
+# #         #             taxtrim = taxtrim if taxtrim else 0
+# #         #             row['taxon_trim'] = taxtrim
+# #         #             writer.writerow(row)
+
+

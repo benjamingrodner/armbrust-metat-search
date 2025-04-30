@@ -77,6 +77,24 @@ def get_output_fn(args):
     )
 
 
+def split_key(keysplit, key):
+    '''
+    Modify a string.
+
+    Args:
+        keysplit (str): Name of the function used to split the key string before searching the 'set_search'
+            Current options are 'remove_6tr' which removes '_\d+' from the end of the string
+            Empty string skips this option
+        key (str): string to be modified
+    Returns:
+        str: modified string
+    '''
+    if keysplit == 'remove_6tr':
+        return re.split(r'_\d+$',key)[0]
+    else:
+        raise KeyError(f'Split key function {keysplit} is not defined yet.')
+
+
 def split_line(line, fn, fn_tar=''):
     """
     Split line string read from file
@@ -107,7 +125,7 @@ def split_line(line, fn, fn_tar=''):
         return re.split(r'\s+', line)
     
 
-def add_to_dict(line, fn, fn_tar, set_search, idx_key, idx_value, dict_metat):
+def add_to_dict(line, fn, fn_tar, set_search, idx_key, idx_value, dict_metat, keysplit=''):
     """
     Extract key and value from a line and add to the dictionary
 
@@ -119,7 +137,9 @@ def add_to_dict(line, fn, fn_tar, set_search, idx_key, idx_value, dict_metat):
         idx_key (int): Index of the key in the parsed line (parsed by ',' or '\s').
         idx_value (int): Index of the mapped value in the parsed line (parsed by ',' or '\s').
         dict_metat (defaultdict(list)): Existing dictionary.
-
+        keysplit (str): Name of the function used to split the key string before searching the 'set_search'
+            Current options are 'remove_6tr' which removes '_\d+' from the end of the string
+            Empty string skips this option
     Returns:
         defaultdict(list): Updated dictionary.
     """
@@ -128,6 +148,8 @@ def add_to_dict(line, fn, fn_tar, set_search, idx_key, idx_value, dict_metat):
     if len(l) > max(idx_key, idx_value):
         # Get key and remove extra quotes
         key = l[idx_key].replace('"','').replace("'", "")
+        if keysplit:
+            key = split_key(keysplit, key)
         # Search target keys
         if key in set_search:
             # Add value to dict
@@ -190,7 +212,7 @@ def open_file(fn, fn_tar=''):
         
 
 
-def get_metat_dict(fn, fn_tar, set_search, idx_key, idx_value):
+def get_metat_dict(fn, fn_tar, set_search, idx_key, idx_value, keysplit):
     """
     Collect all contigs with given Kegg Orthologies
     SET UP to parse armbrust-metat folder files as of 2024-12-19
@@ -211,7 +233,8 @@ def get_metat_dict(fn, fn_tar, set_search, idx_key, idx_value):
         dict_metat = add_to_dict(
             line, fn, fn_tar,
             set_search, idx_key, idx_value,
-            dict_metat
+            dict_metat,
+            keysplit=keysplit
         )
     f.close()
     return dict_metat
@@ -312,6 +335,10 @@ def parse_arguments():
         '-ivl', '--idx_value', type=int, nargs='?', const=1,
         help="Column name in metat file to be used for dictionary values."
     )
+    parser.add_argument(
+        '-ks', '--keysplit', type=str, nargs='?', const='',
+        help="Function to be used if modifying the key string in each line. Current options are 'remove_6tr' which removes '_\d+' from the end of the string."
+    )
 
     parser.add_argument(
         '-o', '--output_fn', type=str, default="", 
@@ -383,7 +410,8 @@ def main():
         args.fn_metat_tar,
         set_search,
         idx_key, 
-        idx_value,   
+        idx_value, 
+        keysplit=args.keysplit  
     )
     
     # Get output filename

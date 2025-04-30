@@ -295,11 +295,12 @@ class TreeTrim:
             # Otherwise get old contigs for node
             else:
                 contigs = self.dict_taxon_contigs[tid]
+            # Get the filter function value
+            func = self.dict_name_filtfunc[filt_func_name]
+            filtvalue, dict_ko_sam_estcounts = func(contigs, **fncargs)
             # skip if root node
             if not n.is_root:
                 # if the mean nkos is less than desired
-                func = self.dict_name_filtfunc[filt_func_name]
-                filtvalue, dict_ko_sam_estcounts = func(contigs, **fncargs)
                 if filtvalue < thresh:
                     # nkos = len(set([self.dict_contig[self.col_ko][c] for c in contigs]))
                     # print(f'{tid} trimmed...with {len(contigs)} contigs and {nkos} kos')
@@ -318,6 +319,7 @@ class TreeTrim:
                     dict_taxtrim_ko_sam_estcounts[tid] = dict_ko_sam_estcounts
             else:
                 dict_taxtrim_contigs[tid] = contigs
+                dict_taxtrim_ko_sam_estcounts[tid] = dict_ko_sam_estcounts
         # Store tensor dict
         self.dict_taxtrim_ko_sam_estcounts = dict_taxtrim_ko_sam_estcounts
         # Store tax -> contig mapping
