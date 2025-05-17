@@ -446,6 +446,12 @@ fmt_sample_norm_factor = (
     + '/dicts_contig_count/norm_factors/{fn_metat}-{fn_targets}-norm_factors'
     + '/{fn_metat}-{fn_targets}-{fn_kallisto}-norm_factor.txt'
 )
+
+fmt_merge_norm_factors = (
+    config['snakemake_output_dir'] + '/{search_output_dir}'
+    + '/dicts_contig_count/norm_factors/{fn_targets}_all_norm_factors.csv'
+)
+
 # get_table_contig_norm_count
 fmt_table_contig_norm_count = (
     config['snakemake_output_dir'] + '/{search_output_dir}'
@@ -537,7 +543,7 @@ fmt_mergeall_dict_taxtrim_contigs = (
         + '_thresh_' + str(config['tree_trim_merge']['thresh']) 
         + '_minsamples_' + str(config['tree_trim_merge']['minsamples'])
         + '_minbatches_' + str(config['tree_trim_merge']['minbatches'])
-        + '.csv'
+        + '.json'
 )
 fmt_mergeall_tensor_taxtrim_tidy = (
     config['snakemake_output_dir'] + '/{search_output_dir}'
@@ -583,6 +589,7 @@ dicts_done = get_fns(fmt_dict)
 contig_list_done = get_fns(fmt_contig_list)
 dicts_contig_count_done = get_fns_sample(fmt_dict_contig_count)
 fns_sample_norm_factor = get_fns_sample(fmt_sample_norm_factor, col_check='sn_type_norm_factor')
+fn_merge_norm_factors = get_fns_target(fmt_merge_norm_factors)
 fns_table_contig_norm_count = get_fns_sample(fmt_table_contig_norm_count, col_check='sn_type_norm_factor')
 fns_table_KO_norm_count = get_fns_sample(fmt_table_KO_norm_count, col_check='sn_type_norm_factor')
 fns_combine_table_KO_norm_count = get_fns_target(fmt_combine_table_KO_norm_count)
@@ -591,6 +598,7 @@ fns_dict_contig_tax = get_fns(fmt_dict_contig_tax, col_check='fn_diamond')
 fns_df_contig_tax_full = get_fns(fmt_df_contig_tax_full, col_check='fn_diamond')
 fns_sample_tidytable = get_fns_sample(fmt_sample_tidytable, col_check='sn_type_norm_factor')
 fns_sample_metadata = get_fns_sample(fmt_sample_metadata, col_check='sn_type_norm_factor')
+fn_mergeall_metadata = get_fns_target(fmt_mergeall_metadata)
 fns_mergesample_tidytable = get_fns(fmt_mergesample_tidytable, col_check='fn_diamond')
 fns_mergesample_tidy_trim = get_fns(fmt_mergesample_tidy_trim, col_check='fn_diamond')
 fns_mergesample_tensor_taxtrim_tidy = get_fns(fmt_mergesample_tensor_taxtrim_tidy, col_check='fn_diamond')
@@ -604,8 +612,9 @@ fn_mergeall_tensor_taxtrim_tidy = get_fns_target(fmt_mergeall_tensor_taxtrim_tid
 
 rule all:
     input:
-        fns_mergesample_tensor_taxtrim_tidy,
-        fn_mergeall_tensor_taxtrim_tidy,
+        fn_mergeall_metadata,
+        # fns_mergesample_tensor_taxtrim_tidy,
+        # fn_mergeall_tensor_taxtrim_tidy,
 
 rule get_dict_KO_contig:
     input:
@@ -811,6 +820,22 @@ rule get_norm_factor:
         # Write norm factor to file
         with open(output.fn_sample_norm_factor, 'w') as f:
             f.write(str(norm_factor))
+
+# rule merge_norm_factors:
+#     input: 
+#         fns_sample_norm_factor = fns_sample_norm_factor
+#     output:
+#         fn_merge_norm_factors = fmt_merge_norm_factors
+#     run:
+#         with open(output.fn_merge_norm_factors, 'w') as fw:
+#             for fn in input.fns_sample_norm_factor:
+#                 # Get kallisto filename wildcard from norm factor filename
+#                 fn_ = os.path.split(fn)[1]
+#                 _, _, fn_kallisto, _ = fn_.split('-')
+#                 # Read norm factor
+#                 with open(fn, 'r') as fr:
+#                     norm_factor = float(fr.read())
+#                 fw.write(f'{fn_kallisto},{norm_factor}\n')                
 
 
 rule get_sum_counts:
@@ -1203,7 +1228,8 @@ rule get_sample_metadata:
     input:
         fn_dict_KO_contigs = fmt_dict,
         fn_dict_contig_tax = fmt_dict_contig_tax,
-        fn_dict_contig_count = fmt_dict_contig_count
+        fn_dict_contig_count = fmt_dict_contig_count,
+        fn_sample_norm_factor = fmt_sample_norm_factor
     output:
         fn_sample_metadata = fmt_sample_metadata
     params:
@@ -1229,6 +1255,9 @@ rule get_sample_metadata:
             fn_sample_counts, 
             params.sn_type_parse_kallisto
         )
+        # Load norm factor
+        with open(input.fn_sample_norm_factor, 'r') as f:
+            norm_factor = f.read()
         # Get sample name without replicate
         namenorep = ''
         for col, info in zip(sample_info_columns, sample_info):
@@ -1237,8 +1266,8 @@ rule get_sample_metadata:
                     namenorep += f"{info}-"
         assm_sample = namenorep[:-1]
         # Add info to rows
-        sample_info_columns += ['fn_sample_counts', 'assm_sample']
-        sample_info += [fn_sample_counts, assm_sample]
+        sample_info_columns += ['fn_sample_counts', 'assm_sample','norm_factor']
+        sample_info += [fn_sample_counts, assm_sample, norm_factor]
         # Write to metadata file
         with open(output.fn_sample_metadata, 'w') as f:
             writer = csv.writer(f)

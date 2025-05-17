@@ -18,7 +18,7 @@ COPY --from=builder /venv /venv
 ARG LBIN=/usr/local/bin
 WORKDIR ${LBIN}
 ARG MODE=555
-COPY --chmod=${MODE} scripts/* functions/* Snakefile _entrypoint.sh ./
+COPY --chmod=${MODE} scripts/* functions/* _entrypoint.sh ./
 # Variables
 ENV XDG_CACHE_HOME=/tmp/.
 ENV PYTHONPATH=${LBIN}
