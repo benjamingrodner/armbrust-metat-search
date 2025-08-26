@@ -612,7 +612,8 @@ fn_mergeall_tensor_taxtrim_tidy = get_fns_target(fmt_mergeall_tensor_taxtrim_tid
 
 rule all:
     input:
-        fn_mergeall_metadata,
+        fn_mergeall_tidytable
+        # fn_mergeall_metadata,
         # fns_mergesample_tensor_taxtrim_tidy,
         # fn_mergeall_tensor_taxtrim_tidy,
 
@@ -1190,7 +1191,7 @@ rule get_sample_tidytable:
         #     writer.writerow(sample_info)
         # Get columns list
         columns = ['contig','fn_sample_counts', 'KO','taxon','estcounts']
-        rep = dict(zip(sample_info_columns, sample_info))['rep']
+        # rep = dict(zip(sample_info_columns, sample_info))['rep']
         # Write lines
         with open(output.fn_sample_tidytable, 'w') as fo:
             writer = csv.writer(fo)

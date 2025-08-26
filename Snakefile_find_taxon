@@ -578,7 +578,8 @@ for fn in fns_start:
 # Scripts
 # sc_get_metat_dict = 'sc_get_metat_dict.py'
 sc_get_column_sum = 'sc.get_column_sum.py'
-sc_get_metat_dict = '../repo-armbrust-metat-search/scripts/sc_get_metat_dict.py'
+path_repo = config['path_repository']
+sc_get_metat_dict = f'{path_repo}/scripts/sc_get_metat_dict.py'
 
 
 # =============================================================================
@@ -612,7 +613,7 @@ fn_mergeall_tensor_taxtrim_tidy = get_fns_target(fmt_mergeall_tensor_taxtrim_tid
 
 rule all:
     input:
-        fn_mergeall_tensor_taxtrim_tidy
+        fn_mergeall_tidytable
 
 
 rule get_dict_taxon_contigs:
@@ -815,18 +816,18 @@ rule get_sample_tidytable:
                 countsum += float(count)
                 row = [c, fn_sample_counts, ko, tax, count]
                 writer.writerow(row)
-        if countsum == 0:
-            raise ValueError(
-                    f"""
-                    Counts were not read from {input.fn_dict_contig_count}, or there are no counts.
-                    """
-                ) 
-        if n_ko == 0:
-            raise ValueError(
-                    f"""
-                    Kos were not read from {input.fn_dict_contig_ko}, or there are no ko annotations.
-                    """
-                ) 
+        # if countsum == 0:
+        #     raise ValueError(
+        #             f"""
+        #             Counts were not read from {input.fn_dict_contig_count}, or there are no counts.
+        #             """
+        #         ) 
+        # if n_ko == 0:
+        #     raise ValueError(
+        #             f"""
+        #             Kos were not read from {input.fn_dict_contig_ko}, or there are no ko annotations.
+        #             """
+        #         ) 
 
 rule merge_all_tidy_tables:
     input:

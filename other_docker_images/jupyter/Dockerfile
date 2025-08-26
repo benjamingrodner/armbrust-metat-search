@@ -2,6 +2,20 @@
 FROM benjamingrodner/metat-builder
 # Update with new packages
 # COPY --chown=$MAMBA_USER:$MAMBA_USER env_jupyter.yml /tmp/env_jupyter.yml
+
+# Minimal graphical support for ete4 tree rendering
+RUN apt-get update && apt-get install -y \
+    libegl1-mesa \
+    libgl1-mesa-glx \
+    libx11-6 \
+    libxcb1 \
+    libxext6 \
+    libxrender1 \
+    fontconfig \
+    ffmpeg \
+    libsm6 \
+    libxext6
+
 ARG MAMBA_DOCKERFILE_ACTIVATE=1
 
 RUN micromamba install --yes \
@@ -20,6 +34,7 @@ RUN micromamba install --yes \
     'scikit-learn' \
     'matplotlib' \
     'seaborn' \
+    'pyqt>=6' \
     && \
     jupyter server --generate-config && \
     micromamba clean --all -f -y && \

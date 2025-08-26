@@ -2,6 +2,9 @@ dicts_iron_KO_contig_example
 example_results_metat_search
 .snakemake
 .etetoolkit
+**/.cache
+**/.jupyter
+**/jupyter_home
 etetoolkit
 ete
 __pycache__
